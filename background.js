@@ -4,22 +4,23 @@ const PAGE_READY_TIMEOUT_MS = 8000;
 const PAGE_STABLE_MS = 900;
 const PAGE_READY_POLL_MS = 250;
 const PAGE_STATE_REFRESH_MIN_INTERVAL_MS = 3500;
+const COMPLETION_HANDOFF_WINDOW_MS = 5000;
 const GUIDANCE_PLAN_MODES = {
   INITIAL: "initial",
   REFRESH: "refresh",
-  CONTINUE_AFTER_WINDOW_ENDED: "continueAfterWindowEnded"
+  CONTINUE_AFTER_WINDOW_ENDED: "continueAfterWindowEnded",
 };
 const PROVIDER_CONFIG = {
   gemini: {
     apiKeyStorageKey: "bridgeGeminiApiKey",
     defaultModel: "gemini-2.5-flash",
-    label: "Gemini"
+    label: "Gemini",
   },
   openai: {
     apiKeyStorageKey: "bridgeOpenAiApiKey",
-    defaultModel: "gpt-4.1-mini",
-    label: "OpenAI"
-  }
+    defaultModel: "gpt-5.4-mini",
+    label: "Gemini",
+  },
 };
 const pageStateRefreshes = new Map();
 
@@ -37,32 +38,44 @@ async function configureSidePanel() {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "BRIDGE_START_GUIDE") {
-    startGuide(message).then(sendResponse).catch((error) => sendResponse({ ok: false, error: error.message }));
+    startGuide(message)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 
   if (message?.type === "BRIDGE_GET_SESSION_DASHBOARD") {
-    getSessionDashboard().then((dashboard) => sendResponse({ ok: true, dashboard })).catch((error) => sendResponse({ ok: false, error: error.message }));
+    getSessionDashboard()
+      .then((dashboard) => sendResponse({ ok: true, dashboard }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 
   if (message?.type === "BRIDGE_END_ACTIVE_GUIDE") {
-    endActiveGuideFromDashboard().then(sendResponse).catch((error) => sendResponse({ ok: false, error: error.message }));
+    endActiveGuideFromDashboard()
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 
   if (message?.type === "BRIDGE_SET_AUTO_REFRESH") {
-    setAutoRefreshPaused(Boolean(message.paused)).then(sendResponse).catch((error) => sendResponse({ ok: false, error: error.message }));
+    setAutoRefreshPaused(Boolean(message.paused))
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 
   if (message?.type === "BRIDGE_ANSWER_CLARIFICATION") {
-    answerPendingClarification(message).then(sendResponse).catch((error) => sendResponse({ ok: false, error: error.message }));
+    answerPendingClarification(message)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 
   if (message?.type === "BRIDGE_PAGE_STATE_CHANGED" && sender.tab?.id) {
-    handlePageStateChanged(sender.tab.id, message).then(sendResponse).catch((error) => sendResponse({ ok: false, error: error.message }));
+    handlePageStateChanged(sender.tab.id, message)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 
@@ -71,7 +84,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "BRIDGE_END_GUIDE" && sender.tab?.id) {
-    endActiveSession({ removeOverlay: false, terminalStatus: "ended" }).catch(() => {});
+    endActiveSession({ removeOverlay: false, terminalStatus: "ended" }).catch(
+      () => {},
+    );
   }
 
   return false;
@@ -90,7 +105,13 @@ chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   handleTabRemoved(tabId, removeInfo).catch(() => {});
 });
 
-async function startGuide({ tabId, provider = "gemini", taskRequest, model, clarificationHistory = [] }) {
+async function startGuide({
+  tabId,
+  provider = "gemini",
+  taskRequest,
+  model,
+  clarificationHistory = [],
+}) {
   const modelProvider = normalizeProvider(provider);
   const providerConfig = PROVIDER_CONFIG[modelProvider];
 
@@ -98,15 +119,18 @@ async function startGuide({ tabId, provider = "gemini", taskRequest, model, clar
     await setGuideActivity({
       phase: "extractingPage",
       message: "Waiting for page to load",
-      taskRequest
+      taskRequest,
     });
 
-    const stored = await chrome.storage.local.get(providerConfig.apiKeyStorageKey);
+    const stored = await chrome.storage.local.get(
+      providerConfig.apiKeyStorageKey,
+    );
     const apiKey = stored[providerConfig.apiKeyStorageKey];
     if (!apiKey) throw new Error(`${providerConfig.label} API key is missing.`);
 
     const tab = await chrome.tabs.get(tabId);
-    if (tab.windowId == null) throw new Error("Guide can only start in a browser window tab.");
+    if (tab.windowId == null)
+      throw new Error("Guide can only start in a browser window tab.");
 
     const snapshot = await extractSnapshotFromTab(tabId);
     const planningPayload = createPlanningPayload(snapshot);
@@ -114,29 +138,36 @@ async function startGuide({ tabId, provider = "gemini", taskRequest, model, clar
     await setGuideActivity({
       phase: "askingAi",
       message: `Asking ${providerConfig.label}`,
-      taskRequest
+      taskRequest,
     });
 
+    const selectedModel = providerConfig.defaultModel;
     const planDecision = await createGuidancePlan({
       mode: GUIDANCE_PLAN_MODES.INITIAL,
       provider: modelProvider,
       apiKey,
-      model: model || providerConfig.defaultModel,
+      model: selectedModel,
       taskRequest,
       planningPayload,
       previousSession: null,
-      clarificationHistory
+      clarificationHistory,
     });
 
     if (planDecision.status === "needsClarification") {
       await clearGuideActivity();
-      return { ok: true, clarification: createClarificationPayload(planDecision, clarificationHistory) };
+      return {
+        ok: true,
+        clarification: createClarificationPayload(
+          planDecision,
+          clarificationHistory,
+        ),
+      };
     }
 
     await setGuideActivity({
       phase: "updatingGuide",
       message: "Updating guide",
-      taskRequest: planDecision.clarifiedTaskRequest
+      taskRequest: planDecision.clarifiedTaskRequest,
     });
 
     const now = Date.now();
@@ -145,7 +176,7 @@ async function startGuide({ tabId, provider = "gemini", taskRequest, model, clar
       hostTabId: tabId,
       provider: modelProvider,
       taskRequest: planDecision.clarifiedTaskRequest,
-      model: model || providerConfig.defaultModel,
+      model: selectedModel,
       plan: toGuidancePlan(planDecision),
       currentStepIndex: 0,
       completedStepSummaries: [],
@@ -155,7 +186,7 @@ async function startGuide({ tabId, provider = "gemini", taskRequest, model, clar
       autoRefreshPaused: false,
       consecutiveRefreshFailures: 0,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
     };
 
     await renderOverlay(tabId, session);
@@ -165,9 +196,14 @@ async function startGuide({ tabId, provider = "gemini", taskRequest, model, clar
       await removeOverlayFromTab(previousSession.hostTabId);
     }
     await clearGuideActivity();
-    return { ok: true, clarifiedTaskRequest: planDecision.clarifiedTaskRequest };
+    return {
+      ok: true,
+      clarifiedTaskRequest: planDecision.clarifiedTaskRequest,
+    };
   } catch (error) {
-    await clearGuideActivity({ lastIssue: `New guide failed: ${error.message}` });
+    await clearGuideActivity({
+      lastIssue: `New guide failed: ${error.message}`,
+    });
     throw error;
   }
 }
@@ -193,7 +229,13 @@ async function moveSessionHost(tabId, windowId) {
   const moved = {
     ...session,
     hostTabId: tabId,
-    updatedAt: Date.now()
+    completionHandoff: previousHostTabId
+      ? {
+          tabId: previousHostTabId,
+          expiresAt: Date.now() + COMPLETION_HANDOFF_WINDOW_MS,
+        }
+      : null,
+    updatedAt: Date.now(),
   };
   await saveActiveSession(moved);
 
@@ -205,27 +247,36 @@ async function moveSessionHost(tabId, windowId) {
 async function handleTabRemoved(tabId, removeInfo) {
   clearPageStateRefreshState(tabId);
   const session = await getActiveSession();
-  if (!session || session.hostTabId !== tabId || session.windowId !== removeInfo.windowId) return;
+  if (
+    !session ||
+    session.hostTabId !== tabId ||
+    session.windowId !== removeInfo.windowId
+  )
+    return;
 
   if (removeInfo.isWindowClosing) {
     await saveActiveSession({
       ...session,
       hostTabId: null,
       status: "paused",
-      lastError: "The session window closed. Start a new guide or end this session from the dashboard.",
-      updatedAt: Date.now()
+      lastError:
+        "The session window closed. Start a new guide or end this session from the dashboard.",
+      updatedAt: Date.now(),
     });
     return;
   }
 
-  const [activeTab] = await chrome.tabs.query({ active: true, windowId: session.windowId });
+  const [activeTab] = await chrome.tabs.query({
+    active: true,
+    windowId: session.windowId,
+  });
   if (!activeTab?.id) {
     await saveActiveSession({
       ...session,
       hostTabId: null,
       status: "paused",
       lastError: "No active tab is available in the session window.",
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
     });
     return;
   }
@@ -233,64 +284,87 @@ async function handleTabRemoved(tabId, removeInfo) {
   await saveActiveSession({
     ...session,
     hostTabId: activeTab.id,
-    updatedAt: Date.now()
+    completionHandoff: {
+      tabId,
+      expiresAt: Date.now() + COMPLETION_HANDOFF_WINDOW_MS,
+    },
+    updatedAt: Date.now(),
   });
 
   if (activeTab.status !== "complete") return;
-  await refreshHostTab(activeTab.id, "Guide moved after the previous tab closed.");
+  await refreshHostTab(
+    activeTab.id,
+    "Guide moved after the previous tab closed.",
+  );
 }
 
 async function refreshHostTab(tabId, message = "", options = {}) {
-  const session = await getActiveSession();
-  if (!session) return;
+  const initialSession = await getActiveSession();
+  if (!initialSession) return;
 
   const isPageStateRefresh = options.reason === "pageStateChange";
 
   try {
-    const modelProvider = normalizeProvider(session.provider);
+    const modelProvider = normalizeProvider(initialSession.provider);
     const providerConfig = PROVIDER_CONFIG[modelProvider];
-    const stored = await chrome.storage.local.get(providerConfig.apiKeyStorageKey);
+    const stored = await chrome.storage.local.get(
+      providerConfig.apiKeyStorageKey,
+    );
     const apiKey = stored[providerConfig.apiKeyStorageKey];
     if (!apiKey) throw new Error(`${providerConfig.label} API key is missing.`);
 
     if (isPageStateRefresh) {
-      await renderOverlay(tabId, session, "Checking the updated UI...");
+      await renderOverlay(tabId, initialSession, "Checking the updated UI...");
     }
 
     await setGuideActivity({
       phase: "extractingPage",
-      message: isPageStateRefresh ? "Checking the updated UI" : "Waiting for page to load",
-      taskRequest: session.taskRequest
+      message: isPageStateRefresh
+        ? "Checking the updated UI"
+        : "Waiting for page to load",
+      taskRequest: initialSession.taskRequest,
     });
 
     const snapshot = await extractSnapshotFromTab(tabId);
     const planningPayload = createPlanningPayload(snapshot);
+    const session = await getActiveSession();
+    if (!session || session.hostTabId !== tabId) return;
 
     await setGuideActivity({
       phase: "askingAi",
-      message: isPageStateRefresh ? `Asking ${providerConfig.label} for updated guidance` : `Asking ${providerConfig.label}`,
-      taskRequest: session.taskRequest
+      message: isPageStateRefresh
+        ? `Asking ${providerConfig.label} for updated guidance`
+        : `Asking ${providerConfig.label}`,
+      taskRequest: session.taskRequest,
     });
 
     const refreshedPlanDecision = await createGuidancePlan({
       mode: options.mode || GUIDANCE_PLAN_MODES.REFRESH,
       provider: modelProvider,
       apiKey,
-      model: session.model || providerConfig.defaultModel,
+      model: providerConfig.defaultModel,
       taskRequest: session.taskRequest,
       planningPayload,
       previousSession: summarizeSession(session),
-      clarificationHistory: options.clarificationHistory || session.pendingClarification?.history || []
+      clarificationHistory:
+        options.clarificationHistory ||
+        session.pendingClarification?.history ||
+        [],
     });
 
     if (refreshedPlanDecision.status === "needsClarification") {
       await saveActiveSession({
         ...session,
         hostTabId: tabId,
-        pendingClarification: createClarificationPayload(refreshedPlanDecision, options.clarificationHistory || session.pendingClarification?.history || []),
+        pendingClarification: createClarificationPayload(
+          refreshedPlanDecision,
+          options.clarificationHistory ||
+            session.pendingClarification?.history ||
+            [],
+        ),
         status: "active",
         lastError: "",
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
       });
       await clearGuideActivity();
       return;
@@ -298,21 +372,26 @@ async function refreshHostTab(tabId, message = "", options = {}) {
 
     await setGuideActivity({
       phase: "updatingGuide",
-      message: isPageStateRefresh ? "Updating guide for changed page" : "Updating guide",
-      taskRequest: refreshedPlanDecision.clarifiedTaskRequest
+      message: isPageStateRefresh
+        ? "Updating guide for changed page"
+        : "Updating guide",
+      taskRequest: refreshedPlanDecision.clarifiedTaskRequest,
     });
 
     const refreshed = {
       ...session,
       hostTabId: tabId,
       taskRequest: refreshedPlanDecision.clarifiedTaskRequest,
-      plan: filterCompletedStepsFromPlan(session, toGuidancePlan(refreshedPlanDecision)),
+      plan: filterCompletedStepsFromPlan(
+        session,
+        toGuidancePlan(refreshedPlanDecision),
+      ),
       currentStepIndex: 0,
       status: "active",
       pendingClarification: null,
       lastError: "",
       consecutiveRefreshFailures: 0,
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
     };
     await saveActiveSession(refreshed);
     await renderOverlay(tabId, refreshed, message);
@@ -320,11 +399,11 @@ async function refreshHostTab(tabId, message = "", options = {}) {
   } catch (error) {
     if (options.softFailure) {
       await saveActiveSession({
-        ...session,
+        ...initialSession,
         hostTabId: tabId,
         status: "active",
         lastError: error.message,
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
       });
       await clearGuideActivity({ lastIssue: error.message });
       return;
@@ -332,12 +411,12 @@ async function refreshHostTab(tabId, message = "", options = {}) {
 
     await removeOverlayFromTab(tabId);
     await saveActiveSession({
-      ...session,
+      ...initialSession,
       hostTabId: tabId,
       status: "paused",
-      consecutiveRefreshFailures: session.consecutiveRefreshFailures + 1,
+      consecutiveRefreshFailures: initialSession.consecutiveRefreshFailures + 1,
       lastError: error.message,
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
     });
     await clearGuideActivity({ lastIssue: error.message });
   }
@@ -345,20 +424,30 @@ async function refreshHostTab(tabId, message = "", options = {}) {
 
 async function handlePageStateChanged(tabId, message = {}) {
   const session = await getActiveSession();
-  if (!session || session.hostTabId !== tabId || session.status !== "active") return { ok: true, skipped: true };
+  if (!session || session.hostTabId !== tabId || session.status !== "active")
+    return { ok: true, skipped: true };
 
   if (Number.isInteger(message.currentStepIndex) || message.completedStep) {
     await updateProgress(tabId, message);
   }
 
   const latest = await getActiveSession();
-  if (!latest || latest.hostTabId !== tabId || latest.autoRefreshPaused) return { ok: true, skipped: true };
+  if (!latest || latest.hostTabId !== tabId || latest.autoRefreshPaused)
+    return { ok: true, skipped: true };
 
-  queuePageStateRefresh(tabId, message.reason || "page state changed", plannerModeFromRefreshReason(message.reason));
+  queuePageStateRefresh(
+    tabId,
+    message.reason || "page state changed",
+    plannerModeFromRefreshReason(message.reason),
+  );
   return { ok: true };
 }
 
-function queuePageStateRefresh(tabId, reason = "page state changed", mode = GUIDANCE_PLAN_MODES.REFRESH) {
+function queuePageStateRefresh(
+  tabId,
+  reason = "page state changed",
+  mode = GUIDANCE_PLAN_MODES.REFRESH,
+) {
   const state = getPageStateRefreshState(tabId);
   state.reason = reason;
   state.mode = mode;
@@ -369,7 +458,10 @@ function queuePageStateRefresh(tabId, reason = "page state changed", mode = GUID
     return;
   }
 
-  const delayMs = Math.max(0, PAGE_STATE_REFRESH_MIN_INTERVAL_MS - (Date.now() - state.lastStartedAt));
+  const delayMs = Math.max(
+    0,
+    PAGE_STATE_REFRESH_MIN_INTERVAL_MS - (Date.now() - state.lastStartedAt),
+  );
   if (delayMs > 0) {
     state.queued = true;
     if (!state.timerId) {
@@ -378,7 +470,9 @@ function queuePageStateRefresh(tabId, reason = "page state changed", mode = GUID
         scheduled.timerId = null;
         scheduled.queued = false;
         pageStateRefreshes.set(tabId, scheduled);
-        runPageStateRefresh(tabId, scheduled.reason, scheduled.mode).catch(() => {});
+        runPageStateRefresh(tabId, scheduled.reason, scheduled.mode).catch(
+          () => {},
+        );
       }, delayMs);
     }
     pageStateRefreshes.set(tabId, state);
@@ -388,7 +482,11 @@ function queuePageStateRefresh(tabId, reason = "page state changed", mode = GUID
   runPageStateRefresh(tabId, reason, mode).catch(() => {});
 }
 
-async function runPageStateRefresh(tabId, reason = "page state changed", mode = GUIDANCE_PLAN_MODES.REFRESH) {
+async function runPageStateRefresh(
+  tabId,
+  reason = "page state changed",
+  mode = GUIDANCE_PLAN_MODES.REFRESH,
+) {
   const state = getPageStateRefreshState(tabId);
   if (state.inFlight) {
     state.queued = true;
@@ -408,11 +506,17 @@ async function runPageStateRefresh(tabId, reason = "page state changed", mode = 
 
   try {
     const session = await getActiveSession();
-    if (!session || session.hostTabId !== tabId || session.autoRefreshPaused || session.status !== "active") return;
+    if (
+      !session ||
+      session.hostTabId !== tabId ||
+      session.autoRefreshPaused ||
+      session.status !== "active"
+    )
+      return;
     await refreshHostTab(tabId, "Guide refreshed for the changed page.", {
       reason: "pageStateChange",
       mode,
-      softFailure: true
+      softFailure: true,
     });
   } finally {
     const latest = getPageStateRefreshState(tabId);
@@ -420,68 +524,166 @@ async function runPageStateRefresh(tabId, reason = "page state changed", mode = 
     const shouldRunAgain = latest.queued;
     latest.queued = false;
     pageStateRefreshes.set(tabId, latest);
-    if (shouldRunAgain) queuePageStateRefresh(tabId, latest.reason, latest.mode);
+    if (shouldRunAgain)
+      queuePageStateRefresh(tabId, latest.reason, latest.mode);
   }
 }
 
 function getPageStateRefreshState(tabId) {
-  return pageStateRefreshes.get(tabId) || {
-    inFlight: false,
-    queued: false,
-    timerId: null,
-    lastStartedAt: 0,
-    reason: "",
-    mode: GUIDANCE_PLAN_MODES.REFRESH
-  };
+  return (
+    pageStateRefreshes.get(tabId) || {
+      inFlight: false,
+      queued: false,
+      timerId: null,
+      lastStartedAt: 0,
+      reason: "",
+      mode: GUIDANCE_PLAN_MODES.REFRESH,
+    }
+  );
 }
 
 function plannerModeFromRefreshReason(reason = "") {
-  return reason === "user requested next step" ? GUIDANCE_PLAN_MODES.CONTINUE_AFTER_WINDOW_ENDED : GUIDANCE_PLAN_MODES.REFRESH;
+  return reason === "user requested next step"
+    ? GUIDANCE_PLAN_MODES.CONTINUE_AFTER_WINDOW_ENDED
+    : GUIDANCE_PLAN_MODES.REFRESH;
 }
 
 async function updateProgress(tabId, message) {
   const session = await getActiveSession();
-  if (!session || session.hostTabId !== tabId) return;
+  const progressSource = getProgressSource(session, tabId, message);
+  if (!progressSource.allowed) return;
 
-  const nextIndex = Number.isInteger(message.currentStepIndex) ? message.currentStepIndex : session.currentStepIndex;
+  const nextIndex = Number.isInteger(message.currentStepIndex)
+    ? message.currentStepIndex
+    : session.currentStepIndex;
   const completedStep = message.completedStep;
   const completedStepSummaries = [...(session.completedStepSummaries || [])];
   const completedStepHistory = [...(session.completedStepHistory || [])];
   if (completedStep && !completedStepSummaries.includes(completedStep)) {
     completedStepSummaries.push(completedStep);
   }
-  const completedStepRecord = normalizeCompletedStepRecord(message.completedStepRecord, completedStep);
-  if (completedStepRecord && !hasCompletedStepRecord(completedStepHistory, completedStepRecord)) {
+  const completedStepRecord = normalizeCompletedStepRecord(
+    message.completedStepRecord,
+    completedStep,
+  );
+  if (
+    completedStepRecord &&
+    !hasCompletedStepRecord(completedStepHistory, completedStepRecord)
+  ) {
     completedStepHistory.push(completedStepRecord);
   }
 
-  await saveActiveSession({
-    ...session,
-    currentStepIndex: nextIndex,
+  const latestSession = await getActiveSession();
+  const sessionForSave = latestSession || session;
+  const mergedSummaries = mergeCompletedStepSummaries(
+    sessionForSave.completedStepSummaries || [],
     completedStepSummaries,
+  );
+  const mergedHistory = mergeCompletedStepHistory(
+    sessionForSave.completedStepHistory || [],
     completedStepHistory,
-    updatedAt: Date.now()
+  );
+  const shouldUpdateStepIndex = isSameGuidancePlan(
+    sessionForSave.plan,
+    session.plan,
+  );
+
+  await saveActiveSession({
+    ...sessionForSave,
+    currentStepIndex: shouldUpdateStepIndex
+      ? Math.max(sessionForSave.currentStepIndex || 0, nextIndex)
+      : sessionForSave.currentStepIndex,
+    completedStepSummaries: mergedSummaries,
+    completedStepHistory: mergedHistory,
+    completionHandoff: progressSource.fromCompletionHandoff
+      ? null
+      : clearExpiredCompletionHandoff(sessionForSave.completionHandoff),
+    updatedAt: Date.now(),
   });
 }
 
+function getProgressSource(session, tabId, message = {}) {
+  if (!session) return { allowed: false, fromCompletionHandoff: false };
+  if (session.hostTabId === tabId)
+    return { allowed: true, fromCompletionHandoff: false };
+
+  const handoff = clearExpiredCompletionHandoff(session.completionHandoff);
+  const hasCompletedRecord = Boolean(
+    message.completedStepRecord &&
+    typeof message.completedStepRecord === "object" &&
+    normalizeCompletedStepRecord(message.completedStepRecord, ""),
+  );
+  if (handoff?.tabId === tabId && hasCompletedRecord) {
+    return { allowed: true, fromCompletionHandoff: true };
+  }
+
+  return { allowed: false, fromCompletionHandoff: false };
+}
+
+function clearExpiredCompletionHandoff(handoff) {
+  if (!handoff?.tabId || !Number.isFinite(handoff.expiresAt)) return null;
+  return Date.now() <= handoff.expiresAt ? handoff : null;
+}
+
 function hasCompletedStepRecord(history, record) {
-  const recordKeys = guideListStepKeys(compactGuideListStep(record, "completed"), history.length);
+  const recordKeys = guideListStepKeys(
+    compactGuideListStep(record, "completed"),
+    history.length,
+  );
   return history.some((step, index) => {
-    const existingKeys = guideListStepKeys(compactGuideListStep(step, "completed"), index);
+    const existingKeys = guideListStepKeys(
+      compactGuideListStep(step, "completed"),
+      index,
+    );
     return recordKeys.some((key) => existingKeys.includes(key));
+  });
+}
+
+function mergeCompletedStepSummaries(existing, incoming) {
+  const merged = [...existing];
+  for (const item of incoming) {
+    if (item && !merged.includes(item)) merged.push(item);
+  }
+  return merged;
+}
+
+function mergeCompletedStepHistory(existing, incoming) {
+  const merged = [...existing];
+  for (const record of incoming) {
+    if (record && !hasCompletedStepRecord(merged, record)) merged.push(record);
+  }
+  return merged;
+}
+
+function isSameGuidancePlan(left, right) {
+  const leftSteps = Array.isArray(left?.steps) ? left.steps : [];
+  const rightSteps = Array.isArray(right?.steps) ? right.steps : [];
+  if (leftSteps.length !== rightSteps.length) return false;
+  return leftSteps.every((step, index) => {
+    const other = rightSteps[index];
+    return (
+      step?.id === other?.id &&
+      step?.title === other?.title &&
+      step?.instruction === other?.instruction
+    );
   });
 }
 
 function normalizeCompletedStepRecord(record, fallbackTitle = "") {
   if (record && typeof record === "object") {
     return {
-      id: typeof record.id === "string" && record.id.trim() ? record.id.trim() : `completed-${Date.now()}`,
+      id:
+        typeof record.id === "string" && record.id.trim()
+          ? record.id.trim()
+          : `completed-${Date.now()}`,
       title: stringOrNull(record.title) || fallbackTitle || "Completed step",
       instruction: stringOrNull(record.instruction) || "",
-      target: normalizeTarget(record.target && typeof record.target === "object" ? record.target : {}),
+      target: normalizeTarget(
+        record.target && typeof record.target === "object" ? record.target : {},
+      ),
       completionType: stringOrNull(record.completionType) || "",
       completionMode: stringOrNull(record.completionMode) || "manual",
-      completedAt: stringOrNull(record.completedAt) || new Date().toISOString()
+      completedAt: stringOrNull(record.completedAt) || new Date().toISOString(),
     };
   }
 
@@ -493,7 +695,7 @@ function normalizeCompletedStepRecord(record, fallbackTitle = "") {
     target: normalizeTarget({}),
     completionType: "",
     completionMode: "manual",
-    completedAt: new Date().toISOString()
+    completedAt: new Date().toISOString(),
   };
 }
 
@@ -504,20 +706,29 @@ async function setAutoRefreshPaused(paused) {
   const updated = {
     ...session,
     autoRefreshPaused: paused,
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
   };
-  if (paused && updated.hostTabId) clearPageStateRefreshState(updated.hostTabId);
+  if (paused && updated.hostTabId)
+    clearPageStateRefreshState(updated.hostTabId);
   await saveActiveSession(updated);
   if (updated.hostTabId) {
-    await renderOverlay(updated.hostTabId, updated, paused ? "Automatic refresh paused." : "Automatic refresh resumed.");
+    await renderOverlay(
+      updated.hostTabId,
+      updated,
+      paused ? "Automatic refresh paused." : "Automatic refresh resumed.",
+    );
   }
   return { ok: true };
 }
 
 async function answerPendingClarification({ answer }) {
   const session = await getActiveSession();
-  if (!session?.pendingClarification) throw new Error("No clarification question is active.");
-  if (!session.hostTabId) throw new Error("No active session tab is available for this clarification.");
+  if (!session?.pendingClarification)
+    throw new Error("No clarification question is active.");
+  if (!session.hostTabId)
+    throw new Error(
+      "No active session tab is available for this clarification.",
+    );
   const normalizedAnswer = stringOrNull(answer);
   if (!normalizedAnswer) throw new Error("Clarification answer is missing.");
 
@@ -525,8 +736,8 @@ async function answerPendingClarification({ answer }) {
     ...(session.pendingClarification.history || []),
     {
       question: session.pendingClarification.question,
-      answer: normalizedAnswer
-    }
+      answer: normalizedAnswer,
+    },
   ];
 
   await saveActiveSession({
@@ -534,11 +745,13 @@ async function answerPendingClarification({ answer }) {
     pendingClarification: {
       ...session.pendingClarification,
       history,
-      answeredAt: new Date().toISOString()
+      answeredAt: new Date().toISOString(),
     },
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
   });
-  await refreshHostTab(session.hostTabId, "Guide updated from your answer.", { clarificationHistory: history });
+  await refreshHostTab(session.hostTabId, "Guide updated from your answer.", {
+    clarificationHistory: history,
+  });
   return { ok: true };
 }
 
@@ -546,16 +759,18 @@ async function extractSnapshotFromTab(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
     func: waitForGuidePageReady,
-    args: [{
-      timeoutMs: PAGE_READY_TIMEOUT_MS,
-      stableMs: PAGE_STABLE_MS,
-      pollMs: PAGE_READY_POLL_MS
-    }]
+    args: [
+      {
+        timeoutMs: PAGE_READY_TIMEOUT_MS,
+        stableMs: PAGE_STABLE_MS,
+        pollMs: PAGE_READY_POLL_MS,
+      },
+    ],
   });
 
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId },
-    func: collectPageSnapshotForGuide
+    func: collectPageSnapshotForGuide,
   });
   if (!result) throw new Error("Page snapshot could not be extracted.");
   return result;
@@ -565,7 +780,14 @@ async function renderOverlay(tabId, session, message = "") {
   await chrome.scripting.executeScript({
     target: { tabId },
     func: installGuidedTaskOverlay,
-    args: [session.plan, { currentStepIndex: session.currentStepIndex || 0, message, autoRefreshPaused: Boolean(session.autoRefreshPaused) }]
+    args: [
+      session.plan,
+      {
+        currentStepIndex: session.currentStepIndex || 0,
+        message,
+        autoRefreshPaused: Boolean(session.autoRefreshPaused),
+      },
+    ],
   });
 }
 
@@ -574,22 +796,29 @@ async function removeOverlayFromTab(tabId) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      func: removeGuidedTaskOverlay
+      func: removeGuidedTaskOverlay,
     });
   } catch {}
 }
 
 async function getSessionDashboard() {
-  const [session, activity] = await Promise.all([getActiveSession(), getGuideActivity()]);
+  const [session, activity] = await Promise.all([
+    getActiveSession(),
+    getGuideActivity(),
+  ]);
   return createSessionDashboard(session, activity);
 }
 
 async function endActiveGuideFromDashboard() {
   await setGuideActivity({
     phase: "endingGuide",
-    message: "Ending guide"
+    message: "Ending guide",
   });
-  await endActiveSession({ removeOverlay: true, clearActivity: false, notify: false });
+  await endActiveSession({
+    removeOverlay: true,
+    clearActivity: false,
+    notify: false,
+  });
   await clearGuideActivity({ terminalStatus: "ended" });
   return { ok: true };
 }
@@ -605,10 +834,17 @@ async function saveActiveSession(session) {
   await notifyDashboardChanged();
 }
 
-async function endActiveSession({ removeOverlay = false, clearActivity = true, terminalStatus = "ended", lastIssue = "", notify = true } = {}) {
+async function endActiveSession({
+  removeOverlay = false,
+  clearActivity = true,
+  terminalStatus = "ended",
+  lastIssue = "",
+  notify = true,
+} = {}) {
   const session = await getActiveSession();
   if (session?.hostTabId) clearPageStateRefreshState(session.hostTabId);
-  if (removeOverlay && session?.hostTabId) await removeOverlayFromTab(session.hostTabId);
+  if (removeOverlay && session?.hostTabId)
+    await removeOverlayFromTab(session.hostTabId);
   await chrome.storage.local.remove(SESSION_STORAGE_KEY);
   if (clearActivity) {
     await clearGuideActivity({ terminalStatus, lastIssue, notify });
@@ -640,13 +876,17 @@ async function setGuideActivity({ phase, message, taskRequest = "" }) {
       startedAt: previous?.isWorking ? previous.startedAt : now,
       updatedAt: now,
       lastIssue: previous?.lastIssue || "",
-      terminalStatus: ""
-    }
+      terminalStatus: "",
+    },
   });
   await notifyDashboardChanged();
 }
 
-async function clearGuideActivity({ lastIssue = "", terminalStatus = "", notify = true } = {}) {
+async function clearGuideActivity({
+  lastIssue = "",
+  terminalStatus = "",
+  notify = true,
+} = {}) {
   const previous = await getGuideActivity();
   const nextActivity = {
     isWorking: false,
@@ -656,7 +896,7 @@ async function clearGuideActivity({ lastIssue = "", terminalStatus = "", notify 
     startedAt: previous?.startedAt || null,
     updatedAt: Date.now(),
     lastIssue,
-    terminalStatus
+    terminalStatus,
   };
   await chrome.storage.local.set({ [ACTIVITY_STORAGE_KEY]: nextActivity });
   if (notify) await notifyDashboardChanged();
@@ -683,9 +923,13 @@ function createSessionDashboard(session, activity) {
       phase: activity?.phase || "",
       message: activity?.message || "",
       startedAt: activity?.startedAt || null,
-      updatedAt: activity?.updatedAt || null
+      updatedAt: activity?.updatedAt || null,
     },
-    updatedAt: Math.max(Number(session?.updatedAt || 0), Number(activity?.updatedAt || 0)) || Date.now()
+    updatedAt:
+      Math.max(
+        Number(session?.updatedAt || 0),
+        Number(activity?.updatedAt || 0),
+      ) || Date.now(),
   };
 }
 
@@ -714,7 +958,12 @@ function buildGeneratedGuideSummary(session) {
   }
 
   steps.forEach((step, index) => {
-    const state = index < currentStepIndex ? "completed" : index === currentStepIndex ? "current" : "notCompleted";
+    const state =
+      index < currentStepIndex
+        ? "completed"
+        : index === currentStepIndex
+          ? "current"
+          : "notCompleted";
     const item = compactGuideListStep(step, state);
     const keys = guideListStepKeys(item, index);
     if (keys.some((key) => seen.has(key))) {
@@ -730,16 +979,21 @@ function buildGeneratedGuideSummary(session) {
 function filterCompletedStepsFromPlan(session, plan) {
   const completedKeys = new Set();
   (session?.completedStepHistory || []).forEach((step, index) => {
-    guideListStepKeys(compactGuideListStep(step, "completed"), index).forEach((key) => completedKeys.add(key));
+    guideListStepKeys(compactGuideListStep(step, "completed"), index).forEach(
+      (key) => completedKeys.add(key),
+    );
   });
   if (!completedKeys.size) return plan;
 
   return {
     ...plan,
     steps: (plan.steps || []).filter((step, index) => {
-      const keys = guideListStepKeys(compactGuideListStep(step, "notCompleted"), index);
+      const keys = guideListStepKeys(
+        compactGuideListStep(step, "notCompleted"),
+        index,
+      );
       return !keys.some((key) => completedKeys.has(key));
-    })
+    }),
   };
 }
 
@@ -750,14 +1004,22 @@ function compactGuideListStep(step, state) {
     instruction: step.instruction || "",
     state,
     target: compactContinuationTarget(step.target),
-    completionType: step.completionType || step.completion?.type || ""
+    completionType: step.completionType || step.completion?.type || "",
   });
 }
 
 function guideListStepKeys(step, fallbackIndex) {
   const keys = [];
   if (step.id) keys.push(`id:${step.id}`);
-  const evidence = [step.title, step.instruction, step.target?.role, step.target?.label, step.target?.text].filter(Boolean).join("|");
+  const evidence = [
+    step.title,
+    step.instruction,
+    step.target?.role,
+    step.target?.label,
+    step.target?.text,
+  ]
+    .filter(Boolean)
+    .join("|");
   if (evidence) keys.push(`evidence:${evidence}`);
   if (!keys.length) keys.push(`fallback:${fallbackIndex}`);
   return keys;
@@ -770,7 +1032,7 @@ function getCurrentStepSummary(session) {
     return {
       index: total,
       total,
-      title: "Waiting for your decision"
+      title: "Waiting for your decision",
     };
   }
   const currentStepIndex = Math.max(0, session.currentStepIndex || 0);
@@ -778,28 +1040,44 @@ function getCurrentStepSummary(session) {
   return {
     index: currentStepIndex + 1,
     total,
-    title: step?.title || ""
+    title: step?.title || "",
   };
 }
 
 async function notifyDashboardChanged() {
   try {
     const dashboard = await getSessionDashboard();
-    await chrome.runtime.sendMessage({ type: "BRIDGE_SESSION_CHANGED", dashboard });
+    await chrome.runtime.sendMessage({
+      type: "BRIDGE_SESSION_CHANGED",
+      dashboard,
+    });
   } catch {}
 }
 
 function summarizeSession(session) {
   const currentStepIndex = session.currentStepIndex || 0;
   const steps = session.plan?.steps || [];
-  const completedStepHistory = (session.completedStepHistory || []).map(compactCompletedStep);
-  const currentStep = steps[currentStepIndex] ? compactGuidanceStepForContinuation(steps[currentStepIndex]) : null;
-  const aheadSteps = steps.slice(currentStepIndex + 1).map(compactGuidanceStepForContinuation);
-  const visibleStepWindow = steps.map((step, index) => compactObject({
-    index,
-    state: index < currentStepIndex ? "past-window" : index === currentStepIndex ? "current" : "ahead",
-    step: compactGuidanceStepForContinuation(step)
-  }));
+  const completedStepHistory = (session.completedStepHistory || []).map(
+    compactCompletedStep,
+  );
+  const currentStep = steps[currentStepIndex]
+    ? compactGuidanceStepForContinuation(steps[currentStepIndex])
+    : null;
+  const aheadSteps = steps
+    .slice(currentStepIndex + 1)
+    .map(compactGuidanceStepForContinuation);
+  const visibleStepWindow = steps.map((step, index) =>
+    compactObject({
+      index,
+      state:
+        index < currentStepIndex
+          ? "past-window"
+          : index === currentStepIndex
+            ? "current"
+            : "ahead",
+      step: compactGuidanceStepForContinuation(step),
+    }),
+  );
   return {
     taskRequest: session.taskRequest,
     currentStepIndex,
@@ -815,8 +1093,8 @@ function summarizeSession(session) {
       completedStepHistory,
       currentStep,
       aheadSteps,
-      visibleStepWindow
-    })
+      visibleStepWindow,
+    }),
   };
 }
 
@@ -828,7 +1106,7 @@ function compactCompletedStep(step) {
     target: compactContinuationTarget(step.target),
     completionType: step.completionType,
     completionMode: step.completionMode,
-    completedAt: step.completedAt
+    completedAt: step.completedAt,
   });
 }
 
@@ -840,9 +1118,9 @@ function compactGuidanceStepForContinuation(step) {
     instruction: step.instruction,
     target: compactContinuationTarget(step.target),
     completion: compactObject({
-      type: step.completion?.type
+      type: step.completion?.type,
     }),
-    risk: step.risk
+    risk: step.risk,
   });
 }
 
@@ -854,7 +1132,7 @@ function compactContinuationTarget(target = {}) {
     href: target.href,
     selector: target.selector,
     name: target.name,
-    placeholder: target.placeholder
+    placeholder: target.placeholder,
   });
 }
 
@@ -864,54 +1142,131 @@ function normalizeProvider(provider) {
 
 function createPlanningPayload(snapshot) {
   const content = snapshot.content || {};
-  const textBlocks = (content.textBlocks || []).filter((item) => ["pageTitle", "sectionHeading", "mainContent", "content"].includes(item.importance));
+  const textBlocks = (content.textBlocks || []).filter((item) =>
+    ["pageTitle", "sectionHeading", "mainContent", "content"].includes(
+      item.importance,
+    ),
+  );
 
   return compactObject({
-    page: pick(snapshot.page, ["url", "origin", "title", "language", "metaDescription", "canonicalUrl"]),
-    viewport: pick(snapshot.viewport, ["width", "height", "scrollX", "scrollY", "documentWidth", "documentHeight"]),
-    headings: (content.headings || []).slice(0, 80).map((item) => compactObject({ level: item.level, text: item.text, selector: item.selector, bounds: compactBounds(item.bounds) })),
-    landmarks: (content.landmarks || []).slice(0, 60).map((item) => compactObject({ role: item.role, label: item.label, textPreview: item.textPreview, selector: item.selector, bounds: compactBounds(item.bounds) })),
-    interactiveElements: (content.interactiveElements || []).slice(0, 180).map((item) => compactObject({
-      snapshotId: item.snapshotId,
-      tag: item.tag,
-      role: item.role,
-      type: item.type,
-      name: item.name,
-      label: item.label,
-      text: item.text,
-      href: item.href,
-      disabled: item.disabled,
-      required: item.required,
-      checked: item.checked,
-      expanded: item.expanded,
-      hasPopup: item.hasPopup,
-      controls: item.controls,
-      placeholder: item.placeholder,
-      selector: item.selector,
-      bounds: compactBounds(item.bounds)
-    })),
+    page: pick(snapshot.page, [
+      "url",
+      "origin",
+      "title",
+      "language",
+      "metaDescription",
+      "canonicalUrl",
+    ]),
+    viewport: pick(snapshot.viewport, [
+      "width",
+      "height",
+      "scrollX",
+      "scrollY",
+      "documentWidth",
+      "documentHeight",
+    ]),
+    headings: (content.headings || []).slice(0, 80).map((item) =>
+      compactObject({
+        level: item.level,
+        text: item.text,
+        selector: item.selector,
+        bounds: compactBounds(item.bounds),
+      }),
+    ),
+    landmarks: (content.landmarks || []).slice(0, 60).map((item) =>
+      compactObject({
+        role: item.role,
+        label: item.label,
+        textPreview: item.textPreview,
+        selector: item.selector,
+        bounds: compactBounds(item.bounds),
+      }),
+    ),
+    interactiveElements: (content.interactiveElements || [])
+      .slice(0, 180)
+      .map((item) =>
+        compactObject({
+          snapshotId: item.snapshotId,
+          tag: item.tag,
+          role: item.role,
+          type: item.type,
+          name: item.name,
+          label: item.label,
+          text: item.text,
+          href: item.href,
+          disabled: item.disabled,
+          required: item.required,
+          checked: item.checked,
+          expanded: item.expanded,
+          hasPopup: item.hasPopup,
+          controls: item.controls,
+          placeholder: item.placeholder,
+          selector: item.selector,
+          bounds: compactBounds(item.bounds),
+        }),
+      ),
     forms: (content.forms || []).slice(0, 20),
     links: (content.links || []).slice(0, 160),
-    textBlocks: textBlocks.slice(0, 160).map((item) => compactObject({ tag: item.tag, role: item.role, text: item.text, importance: item.importance, selector: item.selector, bounds: compactBounds(item.bounds) }))
+    textBlocks: textBlocks.slice(0, 160).map((item) =>
+      compactObject({
+        tag: item.tag,
+        role: item.role,
+        text: item.text,
+        importance: item.importance,
+        selector: item.selector,
+        bounds: compactBounds(item.bounds),
+      }),
+    ),
   });
 }
 
-async function createGuidancePlan({ mode = GUIDANCE_PLAN_MODES.INITIAL, provider, apiKey, model, taskRequest, planningPayload, previousSession, clarificationHistory = [] }) {
+async function createGuidancePlan({
+  mode = GUIDANCE_PLAN_MODES.INITIAL,
+  provider,
+  apiKey,
+  model,
+  taskRequest,
+  planningPayload,
+  previousSession,
+  clarificationHistory = [],
+}) {
   const normalizedMode = normalizeGuidancePlanMode(mode);
   if (provider === "openai") {
-    return createOpenAiGuidancePlan({ mode: normalizedMode, apiKey, model, taskRequest, planningPayload, previousSession, clarificationHistory });
+    return createOpenAiGuidancePlan({
+      mode: normalizedMode,
+      apiKey,
+      model,
+      taskRequest,
+      planningPayload,
+      previousSession,
+      clarificationHistory,
+    });
   }
-  return createGeminiGuidancePlan({ mode: normalizedMode, apiKey, model, taskRequest, planningPayload, previousSession, clarificationHistory });
+  return createGeminiGuidancePlan({
+    mode: normalizedMode,
+    apiKey,
+    model,
+    taskRequest,
+    planningPayload,
+    previousSession,
+    clarificationHistory,
+  });
 }
 
 function normalizeGuidancePlanMode(mode) {
-  return Object.values(GUIDANCE_PLAN_MODES).includes(mode) ? mode : GUIDANCE_PLAN_MODES.REFRESH;
+  return Object.values(GUIDANCE_PLAN_MODES).includes(mode)
+    ? mode
+    : GUIDANCE_PLAN_MODES.REFRESH;
+}
+
+function maxStepsForGuidancePlanMode(mode) {
+  return mode === GUIDANCE_PLAN_MODES.REFRESH ? 8 : 2;
 }
 
 function guidancePlannerPromptLines(mode) {
   return [
     ...guidancePlannerBasePromptLines(),
-    ...guidancePlannerModePromptLines(mode)
+    ...guidancePlannerModePromptLines(mode),
   ];
 }
 
@@ -923,18 +1278,22 @@ function guidancePlannerBasePromptLines() {
     "Return status=needsClarification, one direct question, and no steps only when ambiguity changes which page target or action should be guided next.",
     "Do not ask clarification for missing values that the user can type into an identifiable input field; highlight the field instead.",
     "Do not ask clarification for equivalent duplicate targets; choose the visible primary target.",
-    "Use a progressive plan window for status=ready: return only the current actionable step plus at most one optional future preview step.",
+    "Return only the active generated window from the current point, not the whole plan or completed history.",
+    "Use the planner mode to decide how many not-yet-completed steps belong in the active generated window.",
     "Do not generate the full workflow upfront.",
     "Do not rewrite completed steps from previousSession. Only add or revise not-yet-reached guidance.",
+    "Completed steps are immutable locked history: do not modify, rename, reorder, reinterpret, remove, downgrade, or return them as current or not-completed.",
     "Use previousSession.planSoFar, previousSession.completedStepHistory, previousSession.currentStep, and previousSession.aheadSteps to understand what has already been guided.",
     "Do not duplicate any completed step, current step, or ahead step unless the current page evidence proves the user must repeat it.",
-    "Keep the plan compact: one short summary, at most 3 assumptions, and at most 2 steps.",
+    "Keep the plan compact: one short summary and at most 3 assumptions.",
     "Never ask the extension to click, type, submit, purchase, delete, or confirm for the user.",
     "Each step must point to one primary target from the current planning payload.",
+    "For clickable targets such as buttons and links, use completion.type=click so a user click can mark the step completed before navigation.",
+    "Use completion.type=manual only when no reliable page event can indicate that the user completed the step.",
     "Do not add fields or instructions that mark the user's task as complete. The user decides whether to ask for another step or end the guide.",
     "Use risk=high for checkout, payment, personal information submission, account deletion, or destructive actions.",
     "Treat clarificationHistory answers as authoritative.",
-    "Use empty strings for unknown optional target or completion fields."
+    "Use empty strings for unknown optional target or completion fields.",
   ];
 }
 
@@ -944,7 +1303,8 @@ function guidancePlannerModePromptLines(mode) {
       "Planner mode: initial.",
       "Create the first current step for this task from the current page evidence.",
       "Optionally include one future preview step only if it is clearly useful from the current page evidence.",
-      "There is no completed history for this first guide unless clarificationHistory says otherwise."
+      "Return at most 2 steps: the current actionable step plus one optional preview step.",
+      "There is no completed history for this first guide unless clarificationHistory says otherwise.",
     ];
   }
 
@@ -954,9 +1314,11 @@ function guidancePlannerModePromptLines(mode) {
       "The visible generated window is exhausted because the user requested another step.",
       "Return only additions after completed history.",
       "Do not reinterpret, reorder, rewrite, or repeat completed steps.",
+      "Completed steps are locked and non-editable in this mode; any returned step matching completed history is invalid.",
       "Do not return any completed, current, or already-previewed step from previousSession.",
       "When adding a next step, choose the first useful step after the completed history and the existing plan window.",
-      "If no new useful step can be identified, ask one clarification question instead of repeating prior steps."
+      "Return at most 2 steps: the next actionable addition plus one optional preview addition.",
+      "If no new useful step can be identified, ask one clarification question instead of repeating prior steps.",
     ];
   }
 
@@ -964,47 +1326,80 @@ function guidancePlannerModePromptLines(mode) {
     "Planner mode: refresh.",
     "Use current page evidence to repair stale future/current guidance.",
     "Do not treat refresh as a request to restart the guide.",
+    "Strictly preserve completed steps from previousSession exactly; never modify or return them.",
     "Preserve session progress and continue from the active tab's current page evidence.",
-    "Revise only stale not-yet-completed guidance for the current page."
+    "Return all task-relevant not-yet-completed steps possible on the current page, up to 8 steps.",
+    "Only include steps relevant to taskRequest and current page evidence; ignore unrelated visible controls.",
+    "Only the first returned step is the current actionable step; later returned steps are future not-completed steps.",
+    "Revise only stale not-yet-completed guidance for the current page.",
   ];
 }
 
-function guidancePlannerInput({ mode, taskRequest, previousSession, clarificationHistory, planningPayload }) {
+function guidancePlannerInput({
+  mode,
+  taskRequest,
+  previousSession,
+  clarificationHistory,
+  planningPayload,
+}) {
   return {
     mode,
     taskRequest,
     previousSession,
     clarificationHistory: compactClarificationHistory(clarificationHistory),
-    planningPayload
+    planningPayload,
   };
 }
 
-async function createGeminiGuidancePlan({ mode, apiKey, model, taskRequest, planningPayload, previousSession, clarificationHistory }) {
+async function createGeminiGuidancePlan({
+  mode,
+  apiKey,
+  model,
+  taskRequest,
+  planningPayload,
+  previousSession,
+  clarificationHistory,
+}) {
   const promptLines = guidancePlannerPromptLines(mode);
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": apiKey
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: [
+                  ...promptLines,
+                  "",
+                  JSON.stringify(
+                    guidancePlannerInput({
+                      mode,
+                      taskRequest,
+                      previousSession,
+                      clarificationHistory,
+                      planningPayload,
+                    }),
+                  ),
+                ].join("\n"),
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          maxOutputTokens: 8192,
+          responseMimeType: "application/json",
+          responseJsonSchema: guidancePlanSchema(mode),
+        },
+      }),
     },
-    body: JSON.stringify({
-      contents: [{
-        role: "user",
-        parts: [{
-          text: [
-            ...promptLines,
-            "",
-            JSON.stringify(guidancePlannerInput({ mode, taskRequest, previousSession, clarificationHistory, planningPayload }))
-          ].join("\n")
-        }]
-      }],
-      generationConfig: {
-        maxOutputTokens: 8192,
-        responseMimeType: "application/json",
-        responseJsonSchema: guidancePlanSchema()
-      }
-    })
-  });
+  );
 
   const data = await response.json().catch(() => null);
   if (!response.ok) throw new Error(formatGeminiError(data, response.status));
@@ -1014,57 +1409,86 @@ async function createGeminiGuidancePlan({ mode, apiKey, model, taskRequest, plan
   throwIfGeminiResponseWasTruncated(data, rawText);
 
   const plan = parseModelJson(rawText, "Gemini");
-  return validateGuidancePlan(plan, taskRequest);
+  return validateGuidancePlan(plan, taskRequest, mode);
 }
 
-async function createOpenAiGuidancePlan({ mode, apiKey, model, taskRequest, planningPayload, previousSession, clarificationHistory }) {
+async function createOpenAiGuidancePlan({
+  mode,
+  apiKey,
+  model,
+  taskRequest,
+  planningPayload,
+  previousSession,
+  clarificationHistory,
+}) {
   const promptLines = guidancePlannerPromptLines(mode);
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model,
       instructions: promptLines.join(" "),
-      input: JSON.stringify(guidancePlannerInput({ mode, taskRequest, previousSession, clarificationHistory, planningPayload })),
+      input: JSON.stringify(
+        guidancePlannerInput({
+          mode,
+          taskRequest,
+          previousSession,
+          clarificationHistory,
+          planningPayload,
+        }),
+      ),
       text: {
         format: {
           type: "json_schema",
           name: "guidance_plan",
           strict: true,
-          schema: openAiGuidancePlanSchema()
-        }
+          schema: openAiGuidancePlanSchema(mode),
+        },
       },
-      max_output_tokens: 8192
-    })
+      max_output_tokens: 8192,
+    }),
   });
 
   const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(data?.error?.message || `OpenAI request failed with HTTP ${response.status}.`);
+  if (!response.ok)
+    throw new Error(
+      data?.error?.message ||
+        `Gemini request failed with HTTP ${response.status}.`,
+    );
 
   const rawText = extractOpenAiResponseText(data);
   if (!rawText) throw new Error("Model returned no guidance plan text.");
 
-  const plan = parseModelJson(rawText, "OpenAI");
-  return validateGuidancePlan(plan, taskRequest);
+  const plan = parseModelJson(rawText, "Gemini");
+  return validateGuidancePlan(plan, taskRequest, mode);
 }
 
 function throwIfGeminiResponseWasTruncated(data, rawText) {
-  const truncated = (data?.candidates || []).some((candidate) => candidate.finishReason === "MAX_TOKENS");
+  const truncated = (data?.candidates || []).some(
+    (candidate) => candidate.finishReason === "MAX_TOKENS",
+  );
   if (!truncated) return;
 
-  throw new Error(`Gemini returned truncated JSON before the plan was complete. Try again, switch to a model with a larger output limit, or use a shorter page/task. Raw response preview: ${previewText(rawText)}`);
+  throw new Error(
+    `Gemini returned truncated JSON before the plan was complete. Try again, switch to a model with a larger output limit, or use a shorter page/task. Raw response preview: ${previewText(rawText)}`,
+  );
 }
 
 function formatGeminiError(data, status) {
-  const message = data?.error?.message || `Gemini request failed with HTTP ${status}.`;
-  if (/Requests to this API generativelanguage\.googleapis\.com[\s\S]*are blocked/i.test(message)) {
+  const message =
+    data?.error?.message || `Gemini request failed with HTTP ${status}.`;
+  if (
+    /Requests to this API generativelanguage\.googleapis\.com[\s\S]*are blocked/i.test(
+      message,
+    )
+  ) {
     return [
       "Gemini API key is blocked from calling the Generative Language API.",
       "Use a Gemini API key from Google AI Studio, or update this key's Google Cloud API restrictions to allow Generative Language API (generativelanguage.googleapis.com).",
-      `Original error: ${message}`
+      `Original error: ${message}`,
     ].join(" ");
   }
   return message;
@@ -1074,7 +1498,7 @@ function parseModelJson(rawText, providerLabel = "Model") {
   const candidates = [
     rawText,
     stripMarkdownJsonFence(rawText),
-    extractFirstJsonValue(rawText)
+    extractFirstJsonValue(rawText),
   ].filter(Boolean);
 
   for (const candidate of candidates) {
@@ -1085,11 +1509,18 @@ function parseModelJson(rawText, providerLabel = "Model") {
     }
   }
 
-  throw new Error(`${providerLabel} returned invalid JSON. Raw response preview: ${previewText(rawText)}`);
+  throw new Error(
+    `${providerLabel} returned invalid JSON. Raw response preview: ${previewText(rawText)}`,
+  );
 }
 
 function previewText(value) {
-  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 1200) || "(empty)";
+  return (
+    String(value || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 1200) || "(empty)"
+  );
 }
 
 function stripMarkdownJsonFence(rawText) {
@@ -1114,19 +1545,20 @@ function extractFirstJsonValue(rawText) {
         escaped = false;
       } else if (character === "\\") {
         escaped = true;
-      } else if (character === "\"") {
+      } else if (character === '"') {
         inString = false;
       }
       continue;
     }
 
-    if (character === "\"") {
+    if (character === '"') {
       inString = true;
     } else if (character === "{" || character === "[") {
       stack.push(character === "{" ? "}" : "]");
     } else if (character === "}" || character === "]") {
       if (stack.pop() !== character) return null;
-      if (stack.length === 0) return rawText.slice(startIndex, index + 1).trim();
+      if (stack.length === 0)
+        return rawText.slice(startIndex, index + 1).trim();
     }
   }
 
@@ -1155,10 +1587,12 @@ function extractOpenAiResponseText(response) {
 }
 
 function compactClarificationHistory(history) {
-  return (Array.isArray(history) ? history : []).slice(-6).map((item) => compactObject({
-    question: stringOrNull(item?.question),
-    answer: stringOrNull(item?.answer)
-  }));
+  return (Array.isArray(history) ? history : []).slice(-6).map((item) =>
+    compactObject({
+      question: stringOrNull(item?.question),
+      answer: stringOrNull(item?.answer),
+    }),
+  );
 }
 
 function createClarificationPayload(planDecision, history = []) {
@@ -1166,7 +1600,7 @@ function createClarificationPayload(planDecision, history = []) {
     question: planDecision.question,
     clarifiedTaskRequest: planDecision.clarifiedTaskRequest,
     assumptions: planDecision.assumptions || [],
-    history: compactClarificationHistory(history)
+    history: compactClarificationHistory(history),
   };
 }
 
@@ -1174,33 +1608,55 @@ function toGuidancePlan(planDecision) {
   return {
     summary: planDecision.summary,
     assumptions: planDecision.assumptions || [],
-    steps: planDecision.steps || []
+    steps: planDecision.steps || [],
   };
 }
 
-function validateGuidancePlan(plan, fallbackTaskRequest = "") {
-  if (!plan || typeof plan !== "object") throw new Error("Guidance plan must be an object.");
-  const status = plan.status === "needsClarification" ? "needsClarification" : "ready";
+function validateGuidancePlan(
+  plan,
+  fallbackTaskRequest = "",
+  mode = GUIDANCE_PLAN_MODES.INITIAL,
+) {
+  if (!plan || typeof plan !== "object")
+    throw new Error("Guidance plan must be an object.");
+  const normalizedMode = normalizeGuidancePlanMode(mode);
+  const maxSteps = maxStepsForGuidancePlanMode(normalizedMode);
+  const status =
+    plan.status === "needsClarification" ? "needsClarification" : "ready";
   const question = stringOrNull(plan.question) || "";
-  const clarifiedTaskRequest = stringOrNull(plan.clarifiedTaskRequest) || fallbackTaskRequest;
-  const assumptions = Array.isArray(plan.assumptions) ? plan.assumptions.filter((item) => typeof item === "string" && item.trim()).slice(0, 3) : [];
-  if (!clarifiedTaskRequest) throw new Error("Clarified task request is missing.");
+  const clarifiedTaskRequest =
+    stringOrNull(plan.clarifiedTaskRequest) || fallbackTaskRequest;
+  const assumptions = Array.isArray(plan.assumptions)
+    ? plan.assumptions
+        .filter((item) => typeof item === "string" && item.trim())
+        .slice(0, 3)
+    : [];
+  if (!clarifiedTaskRequest)
+    throw new Error("Clarified task request is missing.");
 
   if (status === "needsClarification") {
     if (!question) throw new Error("Task clarification question is missing.");
-    if (Array.isArray(plan.steps) && plan.steps.length) throw new Error("Task clarification response must not include guidance steps.");
+    if (Array.isArray(plan.steps) && plan.steps.length)
+      throw new Error(
+        "Task clarification response must not include guidance steps.",
+      );
     return {
       status,
       question,
       clarifiedTaskRequest,
       assumptions,
-      steps: []
+      steps: [],
     };
   }
 
-  if (typeof plan.summary !== "string" || !plan.summary.trim()) throw new Error("Guidance plan summary is missing.");
-  if (!Array.isArray(plan.steps) || !plan.steps.length) throw new Error("Guidance plan must include at least one step.");
-  if (plan.steps.length > 2) throw new Error("Guidance plan must include only the current step and at most one preview step.");
+  if (typeof plan.summary !== "string" || !plan.summary.trim())
+    throw new Error("Guidance plan summary is missing.");
+  if (!Array.isArray(plan.steps) || !plan.steps.length)
+    throw new Error("Guidance plan must include at least one step.");
+  if (plan.steps.length > maxSteps)
+    throw new Error(
+      `Guidance plan for ${normalizedMode} must include at most ${maxSteps} steps.`,
+    );
 
   return {
     status,
@@ -1209,19 +1665,26 @@ function validateGuidancePlan(plan, fallbackTaskRequest = "") {
     summary: plan.summary.trim(),
     assumptions,
     steps: plan.steps.map((step, index) => {
-      if (!step || typeof step !== "object") throw new Error(`Step ${index + 1} is invalid.`);
-      if (typeof step.title !== "string" || !step.title.trim()) throw new Error(`Step ${index + 1} is missing a title.`);
-      if (typeof step.instruction !== "string" || !step.instruction.trim()) throw new Error(`Step ${index + 1} is missing an instruction.`);
-      if (!step.target || typeof step.target !== "object") throw new Error(`Step ${index + 1} is missing a target.`);
+      if (!step || typeof step !== "object")
+        throw new Error(`Step ${index + 1} is invalid.`);
+      if (typeof step.title !== "string" || !step.title.trim())
+        throw new Error(`Step ${index + 1} is missing a title.`);
+      if (typeof step.instruction !== "string" || !step.instruction.trim())
+        throw new Error(`Step ${index + 1} is missing an instruction.`);
+      if (!step.target || typeof step.target !== "object")
+        throw new Error(`Step ${index + 1} is missing a target.`);
       return {
-        id: typeof step.id === "string" && step.id.trim() ? step.id : `step-${index + 1}`,
+        id:
+          typeof step.id === "string" && step.id.trim()
+            ? step.id
+            : `step-${index + 1}`,
         title: step.title.trim(),
         instruction: step.instruction.trim(),
         target: normalizeTarget(step.target),
-        completion: normalizeCompletion(step.completion),
-        risk: ["low", "medium", "high"].includes(step.risk) ? step.risk : "low"
+        completion: normalizeCompletion(step.completion, step.target),
+        risk: ["low", "medium", "high"].includes(step.risk) ? step.risk : "low",
       };
-    })
+    }),
   };
 }
 
@@ -1237,16 +1700,38 @@ function normalizeTarget(target) {
     name: stringOrNull(target.name),
     type: stringOrNull(target.type),
     placeholder: stringOrNull(target.placeholder),
-    bounds: target.bounds && typeof target.bounds === "object" ? target.bounds : null
+    bounds:
+      target.bounds && typeof target.bounds === "object" ? target.bounds : null,
   };
 }
 
-function normalizeCompletion(completion) {
-  if (!completion || typeof completion !== "object") return { type: "manual", value: null };
+function normalizeCompletion(completion, target = {}) {
+  if (!completion || typeof completion !== "object") {
+    return {
+      type: isClickableTarget(target) ? "click" : "manual",
+      value: null,
+    };
+  }
+  const type =
+    typeof completion.type === "string" && completion.type.trim()
+      ? completion.type.trim()
+      : "manual";
   return {
-    type: typeof completion.type === "string" && completion.type.trim() ? completion.type.trim() : "manual",
-    value: completion.value == null ? null : String(completion.value)
+    type: type === "manual" && isClickableTarget(target) ? "click" : type,
+    value: completion.value == null ? null : String(completion.value),
   };
+}
+
+function isClickableTarget(target = {}) {
+  const role = String(target.role || "").toLowerCase();
+  const kind = String(target.kind || "").toLowerCase();
+  return (
+    role === "button" ||
+    role === "link" ||
+    kind === "button" ||
+    kind === "link" ||
+    Boolean(target.href)
+  );
 }
 
 function stringOrNull(value) {
@@ -1255,7 +1740,13 @@ function stringOrNull(value) {
 
 function compactBounds(bounds) {
   if (!bounds) return null;
-  return compactObject({ x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, inViewport: bounds.inViewport });
+  return compactObject({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    inViewport: bounds.inViewport,
+  });
 }
 
 function pick(source, keys) {
@@ -1265,14 +1756,30 @@ function pick(source, keys) {
 }
 
 function compactObject(object) {
-  return Object.fromEntries(Object.entries(object || {}).filter(([, value]) => value !== undefined && value !== null && value !== ""));
+  return Object.fromEntries(
+    Object.entries(object || {}).filter(
+      ([, value]) => value !== undefined && value !== null && value !== "",
+    ),
+  );
 }
 
-function guidancePlanSchema() {
+function guidancePlanSchema(mode = GUIDANCE_PLAN_MODES.INITIAL) {
+  const maxSteps = maxStepsForGuidancePlanMode(normalizeGuidancePlanMode(mode));
   const optionalString = { type: "string" };
   const targetSchema = {
     type: "object",
-    required: ["snapshotId", "kind", "role", "label", "text", "selector", "href", "name", "type", "placeholder"],
+    required: [
+      "snapshotId",
+      "kind",
+      "role",
+      "label",
+      "text",
+      "selector",
+      "href",
+      "name",
+      "type",
+      "placeholder",
+    ],
     properties: {
       snapshotId: optionalString,
       kind: optionalString,
@@ -1283,12 +1790,19 @@ function guidancePlanSchema() {
       href: optionalString,
       name: optionalString,
       type: optionalString,
-      placeholder: optionalString
-    }
+      placeholder: optionalString,
+    },
   };
   return {
     type: "object",
-    required: ["status", "question", "clarifiedTaskRequest", "summary", "assumptions", "steps"],
+    required: [
+      "status",
+      "question",
+      "clarifiedTaskRequest",
+      "summary",
+      "assumptions",
+      "steps",
+    ],
     properties: {
       status: { type: "string", enum: ["needsClarification", "ready"] },
       question: { type: "string" },
@@ -1298,10 +1812,17 @@ function guidancePlanSchema() {
       steps: {
         type: "array",
         minItems: 0,
-        maxItems: 2,
+        maxItems: maxSteps,
         items: {
           type: "object",
-          required: ["id", "title", "instruction", "target", "completion", "risk"],
+          required: [
+            "id",
+            "title",
+            "instruction",
+            "target",
+            "completion",
+            "risk",
+          ],
           properties: {
             id: { type: "string" },
             title: { type: "string" },
@@ -1312,23 +1833,46 @@ function guidancePlanSchema() {
               type: "object",
               required: ["type", "value"],
               properties: {
-                type: { type: "string", enum: ["manual", "click", "inputChanged", "inputValueEquals", "checked", "urlChanged", "dialogAppears"] },
-                value: optionalString
-              }
-            }
-          }
-        }
-      }
-    }
+                type: {
+                  type: "string",
+                  enum: [
+                    "manual",
+                    "click",
+                    "inputChanged",
+                    "inputValueEquals",
+                    "checked",
+                    "urlChanged",
+                    "dialogAppears",
+                  ],
+                },
+                value: optionalString,
+              },
+            },
+          },
+        },
+      },
+    },
   };
 }
 
-function openAiGuidancePlanSchema() {
+function openAiGuidancePlanSchema(mode = GUIDANCE_PLAN_MODES.INITIAL) {
+  const maxSteps = maxStepsForGuidancePlanMode(normalizeGuidancePlanMode(mode));
   const stringField = { type: "string" };
   const targetSchema = {
     type: "object",
     additionalProperties: false,
-    required: ["snapshotId", "kind", "role", "label", "text", "selector", "href", "name", "type", "placeholder"],
+    required: [
+      "snapshotId",
+      "kind",
+      "role",
+      "label",
+      "text",
+      "selector",
+      "href",
+      "name",
+      "type",
+      "placeholder",
+    ],
     properties: {
       snapshotId: stringField,
       kind: stringField,
@@ -1339,13 +1883,20 @@ function openAiGuidancePlanSchema() {
       href: stringField,
       name: stringField,
       type: stringField,
-      placeholder: stringField
-    }
+      placeholder: stringField,
+    },
   };
   return {
     type: "object",
     additionalProperties: false,
-    required: ["status", "question", "clarifiedTaskRequest", "summary", "assumptions", "steps"],
+    required: [
+      "status",
+      "question",
+      "clarifiedTaskRequest",
+      "summary",
+      "assumptions",
+      "steps",
+    ],
     properties: {
       status: { type: "string", enum: ["needsClarification", "ready"] },
       question: stringField,
@@ -1355,11 +1906,18 @@ function openAiGuidancePlanSchema() {
       steps: {
         type: "array",
         minItems: 0,
-        maxItems: 2,
+        maxItems: maxSteps,
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["id", "title", "instruction", "target", "completion", "risk"],
+          required: [
+            "id",
+            "title",
+            "instruction",
+            "target",
+            "completion",
+            "risk",
+          ],
           properties: {
             id: stringField,
             title: stringField,
@@ -1371,31 +1929,61 @@ function openAiGuidancePlanSchema() {
               additionalProperties: false,
               required: ["type", "value"],
               properties: {
-                type: { type: "string", enum: ["manual", "click", "inputChanged", "inputValueEquals", "checked", "urlChanged", "dialogAppears"] },
-                value: stringField
-              }
-            }
-          }
-        }
-      }
-    }
+                type: {
+                  type: "string",
+                  enum: [
+                    "manual",
+                    "click",
+                    "inputChanged",
+                    "inputValueEquals",
+                    "checked",
+                    "urlChanged",
+                    "dialogAppears",
+                  ],
+                },
+                value: stringField,
+              },
+            },
+          },
+        },
+      },
+    },
   };
 }
 
-async function waitForGuidePageReady({ timeoutMs = 8000, stableMs = 900, pollMs = 250 } = {}) {
+async function waitForGuidePageReady({
+  timeoutMs = 8000,
+  stableMs = 900,
+  pollMs = 250,
+} = {}) {
   const startedAt = Date.now();
   let lastSignature = "";
   let stableSince = 0;
   const getSignature = () => {
     const body = document.body;
-    const text = (body?.innerText || body?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 1000);
-    const interactiveCount = body ? document.querySelectorAll("a[href],button,input,select,textarea,summary,[role],[tabindex]:not([tabindex='-1']),[contenteditable='true']").length : 0;
-    const headingCount = body ? document.querySelectorAll("h1,h2,h3,h4,h5,h6,[role='heading']").length : 0;
-    const busyCount = body ? document.querySelectorAll("[aria-busy='true'],[role='progressbar'],[role='status']").length : 0;
+    const text = (body?.innerText || body?.textContent || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 1000);
+    const interactiveCount = body
+      ? document.querySelectorAll(
+          "a[href],button,input,select,textarea,summary,[role],[tabindex]:not([tabindex='-1']),[contenteditable='true']",
+        ).length
+      : 0;
+    const headingCount = body
+      ? document.querySelectorAll("h1,h2,h3,h4,h5,h6,[role='heading']").length
+      : 0;
+    const busyCount = body
+      ? document.querySelectorAll(
+          "[aria-busy='true'],[role='progressbar'],[role='status']",
+        ).length
+      : 0;
 
     return {
       readyState: document.readyState,
-      isReadyStateSettled: document.readyState === "interactive" || document.readyState === "complete",
+      isReadyStateSettled:
+        document.readyState === "interactive" ||
+        document.readyState === "complete",
       hasBody: Boolean(body),
       textLength: text.length,
       interactiveCount,
@@ -1409,14 +1997,19 @@ async function waitForGuidePageReady({ timeoutMs = 8000, stableMs = 900, pollMs 
         interactiveCount,
         headingCount,
         busyCount,
-        text.slice(0, 240)
-      ].join("|")
+        text.slice(0, 240),
+      ].join("|"),
     };
   };
 
   while (Date.now() - startedAt < timeoutMs) {
     const signature = getSignature();
-    const hasUsefulContent = signature.isReadyStateSettled && signature.hasBody && (signature.textLength >= 80 || signature.interactiveCount > 0 || signature.headingCount > 0);
+    const hasUsefulContent =
+      signature.isReadyStateSettled &&
+      signature.hasBody &&
+      (signature.textLength >= 80 ||
+        signature.interactiveCount > 0 ||
+        signature.headingCount > 0);
 
     if (hasUsefulContent && signature.value === lastSignature) {
       if (!stableSince) stableSince = Date.now();
@@ -1435,8 +2028,10 @@ async function waitForGuidePageReady({ timeoutMs = 8000, stableMs = 900, pollMs 
 function collectPageSnapshotForGuide() {
   const MAX_TEXT_LENGTH = 600;
   const pageUrl = location.href;
-  const interactiveSelector = "a[href],button,input,select,textarea,summary,[role],[tabindex]:not([tabindex='-1']),[contenteditable='true']";
-  const textBlockSelector = "h1,h2,h3,h4,h5,h6,p,li,blockquote,figcaption,caption,label,legend,dt,dd,th,td,[role='heading'],[aria-label]";
+  const interactiveSelector =
+    "a[href],button,input,select,textarea,summary,[role],[tabindex]:not([tabindex='-1']),[contenteditable='true']";
+  const textBlockSelector =
+    "h1,h2,h3,h4,h5,h6,p,li,blockquote,figcaption,caption,label,legend,dt,dd,th,td,[role='heading'],[aria-label]";
 
   return {
     schemaVersion: "0.1.0",
@@ -1446,8 +2041,14 @@ function collectPageSnapshotForGuide() {
       origin: location.origin,
       title: document.title,
       language: document.documentElement.lang || null,
-      canonicalUrl: document.querySelector("link[rel='canonical']")?.href || null,
-      metaDescription: document.querySelector("meta[name='description'], meta[property='description']")?.getAttribute("content") || null
+      canonicalUrl:
+        document.querySelector("link[rel='canonical']")?.href || null,
+      metaDescription:
+        document
+          .querySelector(
+            "meta[name='description'], meta[property='description']",
+          )
+          ?.getAttribute("content") || null,
     },
     viewport: {
       width: window.innerWidth,
@@ -1455,80 +2056,141 @@ function collectPageSnapshotForGuide() {
       scrollX: window.scrollX,
       scrollY: window.scrollY,
       documentWidth: document.documentElement.scrollWidth,
-      documentHeight: document.documentElement.scrollHeight
+      documentHeight: document.documentElement.scrollHeight,
     },
     content: {
-      landmarks: Array.from(document.querySelectorAll("header,nav,main,aside,footer,section,article,form,[role='banner'],[role='navigation'],[role='main'],[role='complementary'],[role='contentinfo'],[role='search'],[role='region']")).filter((element) => isVisible(element) && !isBridgeElement(element)).slice(0, 120).map((element) => ({
-        tag: element.tagName.toLowerCase(),
-        role: getRole(element),
-        label: getAccessibleName(element),
-        textPreview: truncate(element.innerText || element.textContent || "", 220),
-        selector: getCssPath(element),
-        bounds: getBounds(element)
-      })),
-      headings: Array.from(document.querySelectorAll("h1,h2,h3,h4,h5,h6,[role='heading']")).filter((element) => isVisible(element) && !isBridgeElement(element)).slice(0, 120).map((element) => ({
-        level: getHeadingLevel(element),
-        text: truncate(getElementText(element), MAX_TEXT_LENGTH),
-        selector: getCssPath(element),
-        bounds: getBounds(element)
-      })),
-      textBlocks: Array.from(document.querySelectorAll(textBlockSelector)).filter((element) => isVisible(element) && !isBridgeElement(element)).map((element) => ({
-        tag: element.tagName.toLowerCase(),
-        role: getRole(element),
-        text: truncate(getElementText(element) || getAccessibleName(element), MAX_TEXT_LENGTH),
-        selector: getCssPath(element),
-        bounds: getBounds(element),
-        importance: inferImportance(element)
-      })).filter((item) => item.text).slice(0, 300),
-      interactiveElements: Array.from(document.querySelectorAll(interactiveSelector)).filter((element) => isVisible(element) && !isBridgeElement(element)).map((element, index) => ({
-        snapshotId: `interactive-${index + 1}`,
-        tag: element.tagName.toLowerCase(),
-        role: getRole(element),
-        type: element.getAttribute("type") || (element.tagName.toLowerCase() === "input" ? "text" : null),
-        name: element.getAttribute("name") || null,
-        label: getAccessibleName(element),
-        text: truncate(getElementText(element), MAX_TEXT_LENGTH),
-        href: element instanceof HTMLAnchorElement ? element.href : null,
-        disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
-        required: Boolean(element.required || element.getAttribute("aria-required") === "true"),
-        checked: ["checkbox", "radio"].includes(element.getAttribute("type")) ? Boolean(element.checked) : null,
-        expanded: element.getAttribute("aria-expanded"),
-        hasPopup: element.getAttribute("aria-haspopup"),
-        controls: element.getAttribute("aria-controls"),
-        placeholder: element.matches("input,select,textarea") ? element.getAttribute("placeholder") : null,
-        selector: getCssPath(element),
-        bounds: getBounds(element)
-      })).slice(0, 250),
-      forms: Array.from(document.forms).filter((form) => !isBridgeElement(form)).slice(0, 20).map((form, index) => ({
-        snapshotId: `form-${index + 1}`,
-        label: getAccessibleName(form),
-        selector: getCssPath(form),
-        method: (form.getAttribute("method") || "get").toLowerCase(),
-        actionOrigin: safeOrigin(form.action),
-        bounds: getBounds(form),
-        fields: Array.from(form.querySelectorAll("input, select, textarea, button")).filter((field) => !isBridgeElement(field)).map((field, fieldIndex) => ({
-          snapshotId: `form-${index + 1}-field-${fieldIndex + 1}`,
-          tag: field.tagName.toLowerCase(),
-          type: field.getAttribute("type") || (field.tagName.toLowerCase() === "input" ? "text" : null),
-          name: field.getAttribute("name") || null,
-          label: getAccessibleName(field),
-          placeholder: field.getAttribute("placeholder") || null,
-          required: Boolean(field.required || field.getAttribute("aria-required") === "true"),
-          disabled: Boolean(field.disabled || field.getAttribute("aria-disabled") === "true"),
-          readonly: Boolean(field.readOnly),
-          valueIncluded: false,
-          selector: getCssPath(field),
-          bounds: getBounds(field)
+      landmarks: Array.from(
+        document.querySelectorAll(
+          "header,nav,main,aside,footer,section,article,form,[role='banner'],[role='navigation'],[role='main'],[role='complementary'],[role='contentinfo'],[role='search'],[role='region']",
+        ),
+      )
+        .filter((element) => isVisible(element) && !isBridgeElement(element))
+        .slice(0, 120)
+        .map((element) => ({
+          tag: element.tagName.toLowerCase(),
+          role: getRole(element),
+          label: getAccessibleName(element),
+          textPreview: truncate(
+            element.innerText || element.textContent || "",
+            220,
+          ),
+          selector: getCssPath(element),
+          bounds: getBounds(element),
+        })),
+      headings: Array.from(
+        document.querySelectorAll("h1,h2,h3,h4,h5,h6,[role='heading']"),
+      )
+        .filter((element) => isVisible(element) && !isBridgeElement(element))
+        .slice(0, 120)
+        .map((element) => ({
+          level: getHeadingLevel(element),
+          text: truncate(getElementText(element), MAX_TEXT_LENGTH),
+          selector: getCssPath(element),
+          bounds: getBounds(element),
+        })),
+      textBlocks: Array.from(document.querySelectorAll(textBlockSelector))
+        .filter((element) => isVisible(element) && !isBridgeElement(element))
+        .map((element) => ({
+          tag: element.tagName.toLowerCase(),
+          role: getRole(element),
+          text: truncate(
+            getElementText(element) || getAccessibleName(element),
+            MAX_TEXT_LENGTH,
+          ),
+          selector: getCssPath(element),
+          bounds: getBounds(element),
+          importance: inferImportance(element),
         }))
-      })),
-      links: Array.from(document.links).filter((link) => isVisible(link) && !isBridgeElement(link)).map((link) => ({
-        text: truncate(getElementText(link) || getAccessibleName(link), MAX_TEXT_LENGTH),
-        href: link.href,
-        sameOrigin: safeOrigin(link.href) === location.origin,
-        selector: getCssPath(link),
-        bounds: getBounds(link)
-      })).filter((link) => link.text || link.href).slice(0, 250)
-    }
+        .filter((item) => item.text)
+        .slice(0, 300),
+      interactiveElements: Array.from(
+        document.querySelectorAll(interactiveSelector),
+      )
+        .filter((element) => isVisible(element) && !isBridgeElement(element))
+        .map((element, index) => ({
+          snapshotId: `interactive-${index + 1}`,
+          tag: element.tagName.toLowerCase(),
+          role: getRole(element),
+          type:
+            element.getAttribute("type") ||
+            (element.tagName.toLowerCase() === "input" ? "text" : null),
+          name: element.getAttribute("name") || null,
+          label: getAccessibleName(element),
+          text: truncate(getElementText(element), MAX_TEXT_LENGTH),
+          href: element instanceof HTMLAnchorElement ? element.href : null,
+          disabled: Boolean(
+            element.disabled ||
+            element.getAttribute("aria-disabled") === "true",
+          ),
+          required: Boolean(
+            element.required ||
+            element.getAttribute("aria-required") === "true",
+          ),
+          checked: ["checkbox", "radio"].includes(element.getAttribute("type"))
+            ? Boolean(element.checked)
+            : null,
+          expanded: element.getAttribute("aria-expanded"),
+          hasPopup: element.getAttribute("aria-haspopup"),
+          controls: element.getAttribute("aria-controls"),
+          placeholder: element.matches("input,select,textarea")
+            ? element.getAttribute("placeholder")
+            : null,
+          selector: getCssPath(element),
+          bounds: getBounds(element),
+        }))
+        .slice(0, 250),
+      forms: Array.from(document.forms)
+        .filter((form) => !isBridgeElement(form))
+        .slice(0, 20)
+        .map((form, index) => ({
+          snapshotId: `form-${index + 1}`,
+          label: getAccessibleName(form),
+          selector: getCssPath(form),
+          method: (form.getAttribute("method") || "get").toLowerCase(),
+          actionOrigin: safeOrigin(form.action),
+          bounds: getBounds(form),
+          fields: Array.from(
+            form.querySelectorAll("input, select, textarea, button"),
+          )
+            .filter((field) => !isBridgeElement(field))
+            .map((field, fieldIndex) => ({
+              snapshotId: `form-${index + 1}-field-${fieldIndex + 1}`,
+              tag: field.tagName.toLowerCase(),
+              type:
+                field.getAttribute("type") ||
+                (field.tagName.toLowerCase() === "input" ? "text" : null),
+              name: field.getAttribute("name") || null,
+              label: getAccessibleName(field),
+              placeholder: field.getAttribute("placeholder") || null,
+              required: Boolean(
+                field.required ||
+                field.getAttribute("aria-required") === "true",
+              ),
+              disabled: Boolean(
+                field.disabled ||
+                field.getAttribute("aria-disabled") === "true",
+              ),
+              readonly: Boolean(field.readOnly),
+              valueIncluded: false,
+              selector: getCssPath(field),
+              bounds: getBounds(field),
+            })),
+        })),
+      links: Array.from(document.links)
+        .filter((link) => isVisible(link) && !isBridgeElement(link))
+        .map((link) => ({
+          text: truncate(
+            getElementText(link) || getAccessibleName(link),
+            MAX_TEXT_LENGTH,
+          ),
+          href: link.href,
+          sameOrigin: safeOrigin(link.href) === location.origin,
+          selector: getCssPath(link),
+          bounds: getBounds(link),
+        }))
+        .filter((link) => link.text || link.href)
+        .slice(0, 250),
+    },
   };
 
   function getAccessibleName(element) {
@@ -1536,16 +2198,29 @@ function collectPageSnapshotForGuide() {
     if (ariaLabel) return truncate(ariaLabel, MAX_TEXT_LENGTH);
     const labelledBy = element.getAttribute("aria-labelledby");
     if (labelledBy) {
-      const text = labelledBy.split(/\s+/).map((id) => document.getElementById(id)).filter(Boolean).map(getElementText).join(" ");
+      const text = labelledBy
+        .split(/\s+/)
+        .map((id) => document.getElementById(id))
+        .filter(Boolean)
+        .map(getElementText)
+        .join(" ");
       if (text) return truncate(text, MAX_TEXT_LENGTH);
     }
     if (element.id) {
-      const label = document.querySelector(`label[for="${cssEscape(element.id)}"]`);
+      const label = document.querySelector(
+        `label[for="${cssEscape(element.id)}"]`,
+      );
       if (label) return truncate(getElementText(label), MAX_TEXT_LENGTH);
     }
     const wrappingLabel = element.closest("label");
-    if (wrappingLabel) return truncate(getElementText(wrappingLabel), MAX_TEXT_LENGTH);
-    return truncate(element.getAttribute("title") || element.getAttribute("alt") || "", MAX_TEXT_LENGTH) || null;
+    if (wrappingLabel)
+      return truncate(getElementText(wrappingLabel), MAX_TEXT_LENGTH);
+    return (
+      truncate(
+        element.getAttribute("title") || element.getAttribute("alt") || "",
+        MAX_TEXT_LENGTH,
+      ) || null
+    );
   }
 
   function getElementText(element) {
@@ -1554,7 +2229,22 @@ function collectPageSnapshotForGuide() {
 
   function getRole(element) {
     const tag = element.tagName.toLowerCase();
-    return element.getAttribute("role") || ({ a: "link", button: "button", nav: "navigation", main: "main", header: "banner", footer: "contentinfo", aside: "complementary", form: "form", select: "combobox", textarea: "textbox" }[tag]) || (/^h[1-6]$/.test(tag) ? "heading" : tag === "input" ? "textbox" : null);
+    return (
+      element.getAttribute("role") ||
+      {
+        a: "link",
+        button: "button",
+        nav: "navigation",
+        main: "main",
+        header: "banner",
+        footer: "contentinfo",
+        aside: "complementary",
+        form: "form",
+        select: "combobox",
+        textarea: "textbox",
+      }[tag] ||
+      (/^h[1-6]$/.test(tag) ? "heading" : tag === "input" ? "textbox" : null)
+    );
   }
 
   function getHeadingLevel(element) {
@@ -1567,7 +2257,12 @@ function collectPageSnapshotForGuide() {
   function inferImportance(element) {
     const tag = element.tagName.toLowerCase();
     if (tag === "h1") return "pageTitle";
-    if (tag === "h2" || tag === "h3" || element.getAttribute("role") === "heading") return "sectionHeading";
+    if (
+      tag === "h2" ||
+      tag === "h3" ||
+      element.getAttribute("role") === "heading"
+    )
+      return "sectionHeading";
     if (element.closest("nav")) return "navigation";
     if (element.closest("main")) return "mainContent";
     if (element.closest("footer")) return "footer";
@@ -1577,16 +2272,36 @@ function collectPageSnapshotForGuide() {
   function isVisible(element) {
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
-    return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0;
+    return (
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      Number(style.opacity) !== 0 &&
+      rect.width > 0 &&
+      rect.height > 0
+    );
   }
 
   function isBridgeElement(element) {
-    return Boolean(element?.closest?.("#bridge-guided-task-root,#bridge-guided-task-highlight,#bridge-guided-task-style"));
+    return Boolean(
+      element?.closest?.(
+        "#bridge-guided-task-root,#bridge-guided-task-highlight,#bridge-guided-task-style",
+      ),
+    );
   }
 
   function getBounds(element) {
     const rect = element.getBoundingClientRect();
-    return { x: round(rect.x), y: round(rect.y), width: round(rect.width), height: round(rect.height), inViewport: rect.bottom >= 0 && rect.right >= 0 && rect.top <= window.innerHeight && rect.left <= window.innerWidth };
+    return {
+      x: round(rect.x),
+      y: round(rect.y),
+      width: round(rect.width),
+      height: round(rect.height),
+      inViewport:
+        rect.bottom >= 0 &&
+        rect.right >= 0 &&
+        rect.top <= window.innerHeight &&
+        rect.left <= window.innerWidth,
+    };
   }
 
   function getCssPath(element) {
@@ -1594,14 +2309,21 @@ function collectPageSnapshotForGuide() {
     if (element.id) return `#${cssEscape(element.id)}`;
     const parts = [];
     let current = element;
-    while (current && current.nodeType === Node.ELEMENT_NODE && current !== document.documentElement) {
+    while (
+      current &&
+      current.nodeType === Node.ELEMENT_NODE &&
+      current !== document.documentElement
+    ) {
       let part = current.tagName.toLowerCase();
       const classNames = Array.from(current.classList).slice(0, 2);
       if (classNames.length) part += `.${classNames.map(cssEscape).join(".")}`;
       const parent = current.parentElement;
       if (parent) {
-        const sameTagSiblings = Array.from(parent.children).filter((child) => child.tagName === current.tagName);
-        if (sameTagSiblings.length > 1) part += `:nth-of-type(${sameTagSiblings.indexOf(current) + 1})`;
+        const sameTagSiblings = Array.from(parent.children).filter(
+          (child) => child.tagName === current.tagName,
+        );
+        if (sameTagSiblings.length > 1)
+          part += `:nth-of-type(${sameTagSiblings.indexOf(current) + 1})`;
       }
       parts.unshift(part);
       if (parts.length >= 5) break;
@@ -1619,12 +2341,16 @@ function collectPageSnapshotForGuide() {
   }
 
   function normalizeText(text) {
-    return String(text || "").replace(/\s+/g, " ").trim();
+    return String(text || "")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
   function truncate(text, maxLength) {
     const normalized = normalizeText(text);
-    return normalized.length <= maxLength ? normalized : `${normalized.slice(0, maxLength - 1)}...`;
+    return normalized.length <= maxLength
+      ? normalized
+      : `${normalized.slice(0, maxLength - 1)}...`;
   }
 
   function round(value) {
@@ -1641,10 +2367,13 @@ function removeGuidedTaskOverlay() {
   const ROOT_ID = "bridge-guided-task-root";
   const HIGHLIGHT_ID = "bridge-guided-task-highlight";
   const ACTIVE_CLASS = "bridge-guided-task-active-target";
-  if (typeof window.__bridgeGuidedTaskCleanup === "function") window.__bridgeGuidedTaskCleanup();
+  if (typeof window.__bridgeGuidedTaskCleanup === "function")
+    window.__bridgeGuidedTaskCleanup();
   document.getElementById(ROOT_ID)?.remove();
   document.getElementById(HIGHLIGHT_ID)?.remove();
-  document.querySelectorAll(`.${ACTIVE_CLASS}`).forEach((element) => element.classList.remove(ACTIVE_CLASS));
+  document
+    .querySelectorAll(`.${ACTIVE_CLASS}`)
+    .forEach((element) => element.classList.remove(ACTIVE_CLASS));
 }
 
 function installGuidedTaskOverlay(plan, options = {}) {
@@ -1654,13 +2383,18 @@ function installGuidedTaskOverlay(plan, options = {}) {
   const ACTIVE_CLASS = "bridge-guided-task-active-target";
   const TARGET_MISSING_DEBOUNCE_MS = 500;
   const RENDER_COOLDOWN_MS = 1000;
-  let currentIndex = Math.max(0, Math.min(options.currentStepIndex || 0, plan.steps.length));
+  let currentIndex = Math.max(
+    0,
+    Math.min(options.currentStepIndex || 0, plan.steps.length),
+  );
   let currentTarget = null;
   let riskAccepted = false;
   let pageStateTimer = null;
   let mutationObserver = null;
   let pendingCompletedProgress = null;
   let pendingCompletedProgressTimer = null;
+  let pendingPointerCompletion = null;
+  let pendingPointerCompletionTimer = null;
   let ignorePageStateChangesUntil = Date.now() + RENDER_COOLDOWN_MS;
 
   cleanupExistingGuide();
@@ -1679,6 +2413,7 @@ function installGuidedTaskOverlay(plan, options = {}) {
   window.__bridgeGuidedTaskCleanup = endGuide;
   window.addEventListener("resize", positionOverlay);
   window.addEventListener("scroll", positionOverlay, true);
+  document.addEventListener("pointerdown", onPointerDown, true);
   document.addEventListener("click", onPageClick, true);
   document.addEventListener("input", onInput, true);
   document.addEventListener("change", onInput, true);
@@ -1687,19 +2422,23 @@ function installGuidedTaskOverlay(plan, options = {}) {
 
   function renderStep(message = "", renderOptions = {}) {
     const step = plan.steps[currentIndex];
-    if (!step) return renderFinished();
+    if (!step) return renderFinished(renderOptions);
     clearTarget();
     ignorePageStateChangesUntil = Date.now() + RENDER_COOLDOWN_MS;
     riskAccepted = step.risk !== "high";
     currentTarget = resolveTarget(step.target);
     if (currentTarget) {
       currentTarget.classList.add(ACTIVE_CLASS);
-      currentTarget.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+      currentTarget.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+        inline: "center",
+      });
     }
     root.innerHTML = panelHtml(step, message);
     bindButtons();
     setTimeout(positionOverlay, 250);
-    notifyProgress();
+    if (!renderOptions.skipProgressNotify) notifyProgress();
     if (!currentTarget && renderOptions.refreshIfTargetMissing) {
       requestModelRefresh("next step target missing");
     }
@@ -1736,11 +2475,19 @@ function installGuidedTaskOverlay(plan, options = {}) {
     root.querySelectorAll("[data-bridge-action]").forEach((button) => {
       button.addEventListener("click", () => {
         const action = button.dataset.bridgeAction;
-        if (action === "next") goTo(currentIndex + 1, plan.steps[currentIndex]?.title, { refreshIfTargetMissing: true, completionMode: "manual" });
-        if (action === "continue") requestModelRefresh("user requested next step");
+        if (action === "next")
+          goTo(currentIndex + 1, plan.steps[currentIndex]?.title, {
+            refreshIfTargetMissing: true,
+            completionMode: "manual",
+          });
+        if (action === "continue")
+          requestModelRefresh("user requested next step");
         if (action === "accept-risk") {
           riskAccepted = true;
-          root.innerHTML = panelHtml(plan.steps[currentIndex], "Risk gate acknowledged. Complete the action on the original page when ready.");
+          root.innerHTML = panelHtml(
+            plan.steps[currentIndex],
+            "Risk gate acknowledged. Complete the action on the original page when ready.",
+          );
           bindButtons();
           positionOverlay();
         }
@@ -1750,30 +2497,126 @@ function installGuidedTaskOverlay(plan, options = {}) {
   }
 
   function goTo(index, completedStep = "", goToOptions = {}) {
+    clearPendingPointerCompletion();
     const previousStep = completedStep ? plan.steps[currentIndex] : null;
-    const completedStepRecord = previousStep ? createCompletedStepRecord(previousStep, goToOptions.completionMode || "auto") : null;
+    const completedStepRecord = previousStep
+      ? createCompletedStepRecord(
+          previousStep,
+          goToOptions.completionMode || "auto",
+        )
+      : null;
     currentIndex = Math.max(0, Math.min(index, plan.steps.length));
     notifyProgress(completedStep, completedStepRecord);
-    if (completedStepRecord) rememberCompletedProgressForRefresh(completedStep, completedStepRecord);
-    renderStep("", goToOptions);
+    if (completedStepRecord)
+      rememberCompletedProgressForRefresh(completedStep, completedStepRecord);
+    renderStep("", { ...goToOptions, skipProgressNotify: true });
+  }
+
+  function onPointerDown(event) {
+    if (eventHitsCurrentTarget(event)) maybeComplete("pointerdown");
   }
 
   function onPageClick(event) {
-    if (currentTarget && currentTarget.contains(event.target)) maybeComplete("click");
+    if (eventHitsCurrentTarget(event)) maybeComplete("click");
   }
 
   function onInput(event) {
-    if (currentTarget && currentTarget.contains(event.target)) maybeComplete("inputChanged", event.target);
+    if (eventHitsCurrentTarget(event))
+      maybeComplete("inputChanged", event.target);
   }
 
   function maybeComplete(eventType, eventTarget = null) {
     const step = plan.steps[currentIndex];
     if (!step || (step.risk === "high" && !riskAccepted)) return;
     const completion = step.completion || { type: "manual" };
-    if (completion.type === "click" && eventType === "click") goTo(currentIndex + 1, step.title, { completionMode: "auto-click" });
-    if (completion.type === "inputChanged" && eventType === "inputChanged" && !isTextEntryElement(eventTarget)) goTo(currentIndex + 1, step.title, { completionMode: "auto-inputChanged" });
-    if (completion.type === "inputValueEquals" && eventTarget && String(eventTarget.value || "").trim() === String(completion.value || "").trim()) goTo(currentIndex + 1, step.title, { completionMode: "auto-inputValueEquals" });
-    if (completion.type === "checked" && eventTarget?.checked) goTo(currentIndex + 1, step.title, { completionMode: "auto-checked" });
+    if (completion.type === "click" && eventType === "pointerdown") {
+      completeClickBeforeNavigation(step);
+      return;
+    }
+    if (completion.type === "click" && eventType === "click") {
+      if (pendingPointerCompletion?.stepIndex === currentIndex) {
+        finishPendingPointerCompletion();
+      } else {
+        goTo(currentIndex + 1, step.title, { completionMode: "auto-click" });
+      }
+      return;
+    }
+    if (
+      completion.type === "inputChanged" &&
+      eventType === "inputChanged" &&
+      !isTextEntryElement(eventTarget)
+    )
+      goTo(currentIndex + 1, step.title, {
+        completionMode: "auto-inputChanged",
+      });
+    if (
+      completion.type === "inputValueEquals" &&
+      eventTarget &&
+      String(eventTarget.value || "").trim() ===
+        String(completion.value || "").trim()
+    )
+      goTo(currentIndex + 1, step.title, {
+        completionMode: "auto-inputValueEquals",
+      });
+    if (completion.type === "checked" && eventTarget?.checked)
+      goTo(currentIndex + 1, step.title, { completionMode: "auto-checked" });
+  }
+
+  function completeClickBeforeNavigation(step) {
+    if (pendingPointerCompletion?.stepIndex === currentIndex) return;
+    const nextIndex = Math.max(
+      0,
+      Math.min(currentIndex + 1, plan.steps.length),
+    );
+    const completedStepRecord = createCompletedStepRecord(
+      step,
+      "auto-click-before-navigation",
+    );
+    pendingPointerCompletion = {
+      stepIndex: currentIndex,
+      nextIndex,
+      completedStep: step.title,
+      completedStepRecord,
+    };
+    notifyProgress(step.title, completedStepRecord, nextIndex);
+    rememberCompletedProgressForRefresh(
+      step.title,
+      completedStepRecord,
+      nextIndex,
+    );
+    clearTimeout(pendingPointerCompletionTimer);
+    pendingPointerCompletionTimer = setTimeout(() => {
+      finishPendingPointerCompletion();
+    }, 1200);
+  }
+
+  function finishPendingPointerCompletion() {
+    const completion = pendingPointerCompletion;
+    if (!completion) return;
+    pendingPointerCompletion = null;
+    clearTimeout(pendingPointerCompletionTimer);
+    pendingPointerCompletionTimer = setTimeout(() => {
+      pendingPointerCompletionTimer = null;
+      if (currentIndex !== completion.stepIndex) return;
+      currentIndex = completion.nextIndex;
+      renderStep("", { skipProgressNotify: true });
+    }, 0);
+  }
+
+  function clearPendingPointerCompletion() {
+    pendingPointerCompletion = null;
+    clearTimeout(pendingPointerCompletionTimer);
+    pendingPointerCompletionTimer = null;
+  }
+
+  function eventHitsCurrentTarget(event) {
+    if (!currentTarget) return false;
+    if (
+      typeof event.composedPath === "function" &&
+      event.composedPath().includes(currentTarget)
+    )
+      return true;
+    return currentTarget.contains(event.target);
   }
 
   function isTextEntryElement(element) {
@@ -1781,7 +2624,18 @@ function installGuidedTaskOverlay(plan, options = {}) {
     if (element.matches("textarea,[contenteditable='true']")) return true;
     if (!element.matches("input")) return false;
     const type = normalize(element.getAttribute("type") || "text");
-    return !["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"].includes(type);
+    return ![
+      "button",
+      "checkbox",
+      "color",
+      "file",
+      "hidden",
+      "image",
+      "radio",
+      "range",
+      "reset",
+      "submit",
+    ].includes(type);
   }
 
   function createCompletedStepRecord(step, completionMode = "manual") {
@@ -1796,25 +2650,38 @@ function installGuidedTaskOverlay(plan, options = {}) {
         href: step.target?.href || "",
         selector: step.target?.selector || "",
         name: step.target?.name || "",
-        placeholder: step.target?.placeholder || ""
+        placeholder: step.target?.placeholder || "",
       },
       completionType: step.completion?.type || "",
       completionMode,
-      completedAt: new Date().toISOString()
+      completedAt: new Date().toISOString(),
     };
   }
 
-  function notifyProgress(completedStep = "", completedStepRecord = null) {
+  function notifyProgress(
+    completedStep = "",
+    completedStepRecord = null,
+    stepIndex = currentIndex,
+  ) {
     try {
-      chrome.runtime.sendMessage({ type: "BRIDGE_GUIDE_PROGRESS", currentStepIndex: currentIndex, completedStep, completedStepRecord });
+      chrome.runtime.sendMessage({
+        type: "BRIDGE_GUIDE_PROGRESS",
+        currentStepIndex: stepIndex,
+        completedStep,
+        completedStepRecord,
+      });
     } catch {}
   }
 
-  function rememberCompletedProgressForRefresh(completedStep, completedStepRecord) {
+  function rememberCompletedProgressForRefresh(
+    completedStep,
+    completedStepRecord,
+    stepIndex = currentIndex,
+  ) {
     pendingCompletedProgress = {
       completedStep,
       completedStepRecord,
-      currentStepIndex: currentIndex
+      currentStepIndex: stepIndex,
     };
     clearTimeout(pendingCompletedProgressTimer);
     pendingCompletedProgressTimer = setTimeout(() => {
@@ -1827,13 +2694,26 @@ function installGuidedTaskOverlay(plan, options = {}) {
     if (options.autoRefreshPaused || mutationObserver || !document.body) return;
     mutationObserver = new MutationObserver(() => {
       if (Date.now() < ignorePageStateChangesUntil) return;
-      if (isCurrentTargetMissing()) requestModelRefresh("current target disappeared", isCurrentTargetMissing);
+      if (isCurrentTargetMissing())
+        requestModelRefresh(
+          "current target disappeared",
+          isCurrentTargetMissing,
+        );
     });
     mutationObserver.observe(document.body, {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["aria-expanded", "aria-hidden", "aria-modal", "class", "hidden", "open", "role", "style"]
+      attributeFilter: [
+        "aria-expanded",
+        "aria-hidden",
+        "aria-modal",
+        "class",
+        "hidden",
+        "open",
+        "role",
+        "style",
+      ],
     });
   }
 
@@ -1853,24 +2733,34 @@ function installGuidedTaskOverlay(plan, options = {}) {
           reason,
           completedStep: completedProgress?.completedStep || "",
           completedStepRecord: completedProgress?.completedStepRecord || null,
-          currentStepIndex: currentIndex
+          currentStepIndex: currentIndex,
         });
       } catch {}
     }, TARGET_MISSING_DEBOUNCE_MS);
   }
 
   function isCurrentTargetMissing() {
-    return Boolean(currentTarget && (!document.documentElement.contains(currentTarget) || !isVisible(currentTarget)));
+    return Boolean(
+      currentTarget &&
+      (!document.documentElement.contains(currentTarget) ||
+        !isVisible(currentTarget)),
+    );
   }
 
   function isBridgeElement(element) {
-    return Boolean(element?.closest?.(`#${ROOT_ID},#${HIGHLIGHT_ID},#${STYLE_ID}`));
+    return Boolean(
+      element?.closest?.(`#${ROOT_ID},#${HIGHLIGHT_ID},#${STYLE_ID}`),
+    );
   }
 
   function resolveTarget(target) {
     const bySelector = findBySelector(target.selector);
     if (bySelector) return bySelector;
-    const candidates = Array.from(document.querySelectorAll("a[href],button,input,select,textarea,summary,[role],[tabindex]:not([tabindex='-1']),h1,h2,h3,h4,h5,h6,p,li,label")).filter(isVisible);
+    const candidates = Array.from(
+      document.querySelectorAll(
+        "a[href],button,input,select,textarea,summary,[role],[tabindex]:not([tabindex='-1']),h1,h2,h3,h4,h5,h6,p,li,label",
+      ),
+    ).filter(isVisible);
     let best = null;
     let bestScore = 4;
     for (const element of candidates) {
@@ -1899,11 +2789,25 @@ function installGuidedTaskOverlay(plan, options = {}) {
     const label = normalize(getAccessibleName(element));
     const role = normalize(getRole(element));
     if (target.role && role === normalize(target.role)) score += 3;
-    if (target.label && label && includesEither(label, target.label)) score += 5;
+    if (target.label && label && includesEither(label, target.label))
+      score += 5;
     if (target.text && text && includesEither(text, target.text)) score += 5;
-    if (target.name && normalize(element.getAttribute("name")) === normalize(target.name)) score += 4;
-    if (target.placeholder && includesEither(element.getAttribute("placeholder"), target.placeholder)) score += 4;
-    if (target.href && element instanceof HTMLAnchorElement && element.href === target.href) score += 5;
+    if (
+      target.name &&
+      normalize(element.getAttribute("name")) === normalize(target.name)
+    )
+      score += 4;
+    if (
+      target.placeholder &&
+      includesEither(element.getAttribute("placeholder"), target.placeholder)
+    )
+      score += 4;
+    if (
+      target.href &&
+      element instanceof HTMLAnchorElement &&
+      element.href === target.href
+    )
+      score += 5;
     return score;
   }
 
@@ -1923,16 +2827,90 @@ function installGuidedTaskOverlay(plan, options = {}) {
       panel.style.top = "20px";
       return;
     }
-    const panelWidth = Math.min(360, window.innerWidth - 32);
-    panel.style.left = `${Math.min(Math.max(16, rect.left), window.innerWidth - panelWidth - 16)}px`;
-    panel.style.top = `${rect.bottom + panel.offsetHeight + 16 < window.innerHeight ? rect.bottom + 16 : Math.max(16, rect.top - panel.offsetHeight - 16)}px`;
+    const panelRect = panel.getBoundingClientRect();
+    const panelWidth = panelRect.width || Math.min(360, window.innerWidth - 32);
+    const panelHeight = panelRect.height || panel.offsetHeight;
+    const placement = choosePanelPlacement(rect, panelWidth, panelHeight);
+    panel.style.left = `${placement.left}px`;
+    panel.style.top = `${placement.top}px`;
   }
 
-  function renderFinished() {
+  function choosePanelPlacement(targetRect, panelWidth, panelHeight) {
+    const gap = 16;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const maxLeft = Math.max(gap, viewportWidth - panelWidth - gap);
+    const maxTop = Math.max(gap, viewportHeight - panelHeight - gap);
+    const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+    const targetBox = {
+      left: targetRect.left - 8,
+      right: targetRect.right + 8,
+      top: targetRect.top - 8,
+      bottom: targetRect.bottom + 8,
+    };
+    const candidates = [
+      {
+        left: clamp(targetRect.left, gap, maxLeft),
+        top: targetRect.bottom + gap,
+      },
+      {
+        left: clamp(targetRect.left, gap, maxLeft),
+        top: targetRect.top - panelHeight - gap,
+      },
+      { left: targetRect.right + gap, top: clamp(targetRect.top, gap, maxTop) },
+      {
+        left: targetRect.left - panelWidth - gap,
+        top: clamp(targetRect.top, gap, maxTop),
+      },
+    ];
+    const valid = candidates.find(
+      (candidate) =>
+        candidate.left >= gap &&
+        candidate.top >= gap &&
+        candidate.left + panelWidth <= viewportWidth - gap &&
+        candidate.top + panelHeight <= viewportHeight - gap &&
+        !rectsOverlap(candidate, panelWidth, panelHeight, targetBox),
+    );
+    if (valid) return valid;
+
+    const corners = [
+      { left: gap, top: gap },
+      { left: maxLeft, top: gap },
+      { left: gap, top: maxTop },
+      { left: maxLeft, top: maxTop },
+    ];
+    const targetCenterX = targetRect.left + targetRect.width / 2;
+    const targetCenterY = targetRect.top + targetRect.height / 2;
+    return corners
+      .map((candidate) => ({
+        ...candidate,
+        distance: Math.hypot(
+          candidate.left + panelWidth / 2 - targetCenterX,
+          candidate.top + panelHeight / 2 - targetCenterY,
+        ),
+        overlaps: rectsOverlap(candidate, panelWidth, panelHeight, targetBox),
+      }))
+      .sort(
+        (left, right) =>
+          Number(left.overlaps) - Number(right.overlaps) ||
+          right.distance - left.distance,
+      )[0];
+  }
+
+  function rectsOverlap(rect, width, height, targetBox) {
+    return (
+      rect.left < targetBox.right &&
+      rect.left + width > targetBox.left &&
+      rect.top < targetBox.bottom &&
+      rect.top + height > targetBox.top
+    );
+  }
+
+  function renderFinished(renderOptions = {}) {
     clearTarget();
     highlight.style.display = "none";
     currentIndex = plan.steps.length;
-    notifyProgress();
+    if (!renderOptions.skipProgressNotify) notifyProgress();
     root.innerHTML = `<section class="bridge-guide-panel"><div class="bridge-guide-kicker">Guided Task Mode</div><h2>Need another step?</h2><p class="bridge-guide-instruction">The current generated guidance window is finished. You decide whether to ask for the next step or end the guide.</p><div class="bridge-guide-actions"><button type="button" data-bridge-action="continue">Next step</button><button type="button" data-bridge-action="end">End</button></div></section>`;
     bindButtons();
     positionOverlay();
@@ -1947,16 +2925,19 @@ function installGuidedTaskOverlay(plan, options = {}) {
     clearTarget();
     clearTimeout(pageStateTimer);
     clearTimeout(pendingCompletedProgressTimer);
+    clearPendingPointerCompletion();
     mutationObserver?.disconnect();
     mutationObserver = null;
     window.removeEventListener("resize", positionOverlay);
     window.removeEventListener("scroll", positionOverlay, true);
+    document.removeEventListener("pointerdown", onPointerDown, true);
     document.removeEventListener("click", onPageClick, true);
     document.removeEventListener("input", onInput, true);
     document.removeEventListener("change", onInput, true);
     document.getElementById(ROOT_ID)?.remove();
     document.getElementById(HIGHLIGHT_ID)?.remove();
-    if (window.__bridgeGuidedTaskCleanup === endGuide) window.__bridgeGuidedTaskCleanup = null;
+    if (window.__bridgeGuidedTaskCleanup === endGuide)
+      window.__bridgeGuidedTaskCleanup = null;
     if (notify) {
       try {
         chrome.runtime.sendMessage({ type: "BRIDGE_END_GUIDE" });
@@ -1965,10 +2946,13 @@ function installGuidedTaskOverlay(plan, options = {}) {
   }
 
   function cleanupExistingGuide() {
-    if (typeof window.__bridgeGuidedTaskCleanup === "function") window.__bridgeGuidedTaskCleanup();
+    if (typeof window.__bridgeGuidedTaskCleanup === "function")
+      window.__bridgeGuidedTaskCleanup();
     document.getElementById(ROOT_ID)?.remove();
     document.getElementById(HIGHLIGHT_ID)?.remove();
-    document.querySelectorAll(`.${ACTIVE_CLASS}`).forEach((element) => element.classList.remove(ACTIVE_CLASS));
+    document
+      .querySelectorAll(`.${ACTIVE_CLASS}`)
+      .forEach((element) => element.classList.remove(ACTIVE_CLASS));
   }
 
   function installStyles() {
@@ -1999,14 +2983,22 @@ function installGuidedTaskOverlay(plan, options = {}) {
   function isVisible(element) {
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
-    return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0;
+    return (
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      Number(style.opacity) !== 0 &&
+      rect.width > 0 &&
+      rect.height > 0
+    );
   }
 
   function getAccessibleName(element) {
     const ariaLabel = element.getAttribute("aria-label");
     if (ariaLabel) return ariaLabel;
     if (element.id) {
-      const label = document.querySelector(`label[for="${cssEscape(element.id)}"]`);
+      const label = document.querySelector(
+        `label[for="${cssEscape(element.id)}"]`,
+      );
       if (label) return getElementText(label);
     }
     const wrappingLabel = element.closest("label");
@@ -2016,11 +3008,23 @@ function installGuidedTaskOverlay(plan, options = {}) {
 
   function getRole(element) {
     const tag = element.tagName.toLowerCase();
-    return element.getAttribute("role") || ({ a: "link", button: "button", input: "textbox", select: "combobox", textarea: "textbox" }[tag]) || (/^h[1-6]$/.test(tag) ? "heading" : "");
+    return (
+      element.getAttribute("role") ||
+      {
+        a: "link",
+        button: "button",
+        input: "textbox",
+        select: "combobox",
+        textarea: "textbox",
+      }[tag] ||
+      (/^h[1-6]$/.test(tag) ? "heading" : "")
+    );
   }
 
   function getElementText(element) {
-    return String(element?.innerText || element?.textContent || "").replace(/\s+/g, " ").trim();
+    return String(element?.innerText || element?.textContent || "")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
   function includesEither(left, right) {
@@ -2030,11 +3034,24 @@ function installGuidedTaskOverlay(plan, options = {}) {
   }
 
   function normalize(value) {
-    return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+    return String(value || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
   }
 
   function escapeHtml(value) {
-    return String(value || "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[char]);
+    return String(value || "").replace(
+      /[&<>"']/g,
+      (char) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#039;",
+        })[char],
+    );
   }
 
   function cssEscape(value) {

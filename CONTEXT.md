@@ -84,6 +84,10 @@ _Avoid_: Full replacement plan, rewritten completed steps, history edit
 The immutable session record of Guidance Steps the user has already completed or passed.
 _Avoid_: Editable past steps, form values, model-rewritten history
 
+**Navigation Completion**:
+A Guidance Step completion caused by the user activating the highlighted Page Target and that activation navigating the current tab or moving the Guidance Session to another active tab within a five-second handoff window.
+_Avoid_: Background tab opening, unrelated tab switch, automatic page load
+
 **Planning Payload**:
 A reduced Page Snapshot view sent to a model for creating a Guidance Plan.
 _Avoid_: Full raw snapshot, form values, default screenshot upload
@@ -174,10 +178,15 @@ _Avoid_: Any Chrome window, global browser scope, profile-wide guide
 - A **Guidance Plan** is created from one **Task Request** and one **Page Snapshot**.
 - A **Guidance Plan** contains one or more **Guidance Steps**.
 - A **Progressive Guidance Plan** should add guidance as the user progresses instead of generating the full task flow upfront.
-- A **Progressive Guidance Plan** should contain the current **Guidance Step** and at most one future **Guidance Step**.
+- A **Progressive Guidance Plan** should size its active generated window by planner mode.
+- Model output for a **Progressive Guidance Plan** should contain only the active generated window from the current point, not the whole plan or completed history.
+- `initial` and `continueAfterWindowEnded` model output should contain the current actionable **Guidance Step** and at most one future **Guidance Step**.
+- `refresh` model output should contain all task-relevant not-yet-completed **Guidance Steps** possible on the current page, up to the refresh step cap.
+- `refresh` model output should ignore unrelated visible controls that do not advance the **Task Request**.
 - A **Progressive Guidance Plan** should request additional guidance at step boundaries rather than during ordinary user interaction.
 - A **Guidance Continuation** may add or revise only not-yet-completed **Guidance Steps**.
 - Completed **Guidance Steps** should not be modified or removed from a **Progressive Guidance Plan**.
+- Model prompts should strictly state that completed **Guidance Steps** are immutable locked history and must not be modified, renamed, reordered, reinterpreted, removed, downgraded, or returned as current/not-completed.
 - **Completed Step History** should preserve enough non-secret step detail to show what was completed without retaining user-entered form values.
 - **Completed Step History** should be append-only for a **Guidance Session**; completed guide entries should not be removed, truncated, downgraded, or overwritten by refresh output.
 - A completed guide entry's state is strict and non-editable; it must never become current or not-completed again.
@@ -223,6 +232,11 @@ _Avoid_: Any Chrome window, global browser scope, profile-wide guide
 - A same-page **Plan Refresh** should be limited to cases where the current highlighted **Page Target** disappears or the user manually advances to a **Guidance Step** whose **Page Target** cannot be found.
 - Text input changes may update **Guidance Step** progress but should not trigger automatic **Plan Refresh** while the user is actively typing.
 - Text input changes should not automatically complete a **Guidance Step** unless the expected text value is explicit.
+- A **Navigation Completion** should record the completed **Guidance Step** before the related **Plan Refresh**.
+- A **Navigation Completion** may be accepted from the previous **Session Host Tab** after the session host has moved, when the completed step came from the highlighted **Page Target** that caused the move.
+- A **Navigation Completion** should apply only when the user action navigates the current tab or moves the **Guidance Session** to an active tab; opening a background tab alone should not complete the step.
+- A **Navigation Completion** from the previous **Session Host Tab** should be accepted only within a five-second completion handoff window.
+- A **Navigation Completion** from the previous **Session Host Tab** should require a completed step record from the highlighted **Page Target**; a bare progress index should not be accepted.
 - Selection controls, checked states, menus, modals, and same-page route or content changes should not trigger **Plan Refresh** unless they make the current highlighted **Page Target** disappear.
 - Multiple nearby **Page State Changes** should be treated as one reason for **Plan Refresh** after the visible task surface settles.
 - A **Plan Refresh** should not trigger another **Plan Refresh** from the extension's own guide updates.

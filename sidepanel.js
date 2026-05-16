@@ -44,12 +44,17 @@ const PROVIDER_DEFAULTS = {
     modelStorageKey: GUIDE_STORAGE_KEYS.geminiModel
   },
   openai: {
-    label: "OpenAI API key",
+    label: "Gemini API key",
     placeholder: "sk-...",
     model: "gpt-4.1-mini",
     apiKeyStorageKey: GUIDE_STORAGE_KEYS.openAiApiKey,
     modelStorageKey: GUIDE_STORAGE_KEYS.openAiModel
   }
+};
+
+const PROVIDER_DISPLAY_LABELS = {
+  gemini: "Gemini",
+  openai: "Gemini"
 };
 
 let clarificationState = null;
@@ -92,7 +97,10 @@ refreshSessionDashboard();
 
 async function restoreGuideSettings() {
   const stored = await chrome.storage.local.get(Object.values(GUIDE_STORAGE_KEYS));
-  providerSelect.value = stored[GUIDE_STORAGE_KEYS.provider] || "gemini";
+  providerSelect.value = "openai";
+  if (stored[GUIDE_STORAGE_KEYS.provider] !== "openai") {
+    await chrome.storage.local.set({ [GUIDE_STORAGE_KEYS.provider]: "openai" });
+  }
   applyProviderFields(stored);
 }
 
@@ -164,11 +172,11 @@ function applyProviderFields(stored = {}) {
   apiKeyLabel.textContent = config.label;
   apiKeyInput.placeholder = config.placeholder;
   apiKeyInput.value = stored[config.apiKeyStorageKey] || "";
-  modelInput.value = stored[config.modelStorageKey] || config.model;
+  modelInput.value = config.model;
 }
 
 function getSelectedProvider() {
-  return providerSelect.value === "openai" ? "openai" : "gemini";
+  return "openai";
 }
 
 async function startGuidedTaskMode() {
@@ -176,7 +184,7 @@ async function startGuidedTaskMode() {
   const providerConfig = PROVIDER_DEFAULTS[provider];
   const taskRequest = taskRequestInput.value.trim();
   const apiKey = apiKeyInput.value.trim();
-  const model = modelInput.value.trim() || providerConfig.model;
+  const model = providerConfig.model;
 
   if (!taskRequest) {
     setStatus("Enter a task request first.", true);
@@ -270,7 +278,7 @@ async function answerTaskClarification() {
 
 async function startGuideWithTaskRequest({ tabId, provider, model, taskRequest, history = [] }) {
   setBusy(true, "Planning guide...");
-  setStatus(`Creating guidance with ${provider === "openai" ? "OpenAI" : "Gemini"}...`);
+  setStatus(`Creating guidance with ${PROVIDER_DISPLAY_LABELS[provider] || "Gemini"}...`);
   const response = await chrome.runtime.sendMessage({
     type: "BRIDGE_START_GUIDE",
     tabId,

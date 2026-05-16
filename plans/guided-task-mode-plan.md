@@ -118,7 +118,7 @@ Validation rules:
 - `needsClarification` must include one direct `question` and no Guidance Steps.
 - `ready` must include a concise `clarifiedTaskRequest`.
 - For `ready`, `summary` must be a string.
-- For `ready`, `steps` must be a non-empty array with at most two items: the current actionable step plus one optional preview step.
+- For `ready`, `steps` must be a non-empty array within the planner mode cap: max 2 for `initial` and `continueAfterWindowEnded`, max 8 for `refresh`.
 - Each step must have `id`, `title`, `instruction`, `target`, `completion`, and `risk`.
 - `risk` must be one of `low`, `medium`, `high`.
 - High-risk steps must render a Risk Gate before the normal step instruction.
@@ -176,14 +176,15 @@ Only the current step is actionable. A second step may be shown as a non-actiona
 
 The model should not generate a full workflow upfront. Initial planning and later refreshes use the same Plan Contract with explicit planner modes: `initial`, `refresh`, and `continueAfterWindowEnded`.
 
-- Return the current actionable **Guidance Step**.
-- Optionally return one future preview **Guidance Step**.
+- For `initial` and `continueAfterWindowEnded`, return the current actionable **Guidance Step** and at most one future preview **Guidance Step**.
+- For `refresh`, return all task-relevant not-yet-completed **Guidance Steps** possible on the current page, up to 8.
+- Return only the active generated window from the current point, not the whole plan or completed history.
 - Do not rewrite completed steps.
 - Do not duplicate completed, current, or already-previewed steps unless the current page evidence proves the user must repeat them.
 - Do not revise the current highlighted step unless its target is missing.
 - Do not decide whether the user is done.
 - For `continueAfterWindowEnded`, return only additions after completed history and ask one clarification question instead of repeating prior steps when no new useful step is identifiable.
-- For `refresh`, repair stale current/future guidance from current page evidence without restarting the guide.
+- For `refresh`, repair stale current/future guidance from current page evidence without restarting the guide, and ignore unrelated visible controls.
 
 Continuation requests should include:
 
@@ -264,7 +265,7 @@ Risk Gate behavior:
    - Requests JSON-only output.
    - Handles network, authentication, and parse failures.
 6. Add a `validateGuidancePlan(value)` function for the Plan Contract.
-   - Reject plans that include more than the current actionable step plus one optional preview step.
+   - Reject plans that exceed the planner mode step cap.
    - Do not validate or require any model-provided done rule.
 7. Add a content-script overlay renderer:
    - Highlight target.
