@@ -252,7 +252,8 @@ _Avoid_: Any Chrome window, global browser scope, profile-wide guide
 - **Guide Activity** does not replace **Session Status**.
 - A **Plan Refresh** caused by a **Page State Change** should appear as **Guide Activity** while the **Guidance Session** remains active.
 - Failed **Guide Activity** does not make a **Guidance Session** failed when the current **Guidance Plan** can still continue.
-- During a **Plan Refresh** caused by a **Page State Change**, the current guide should remain visible in an updating state until a refreshed **Guidance Plan** is ready.
+- During a **Plan Refresh**, the page guide should be removed while the refresh request is ongoing and shown again only after refreshed guidance is ready.
+- During a **Plan Refresh**, the **Session Dashboard** should also hide the generated guide and current step until the refresh request finishes.
 - A failed **Plan Refresh** caused by a **Page State Change** should keep the previous **Guidance Plan** available when it can still continue.
 - A **Session Dashboard** presents the current **Session Status** and **Guide Activity** for the **Guidance Session**.
 - A **Session Dashboard** may present the **Task Request**, current **Guidance Step**, and latest pause or failure reason.

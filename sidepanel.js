@@ -21,6 +21,7 @@ const guideActivityText = document.getElementById("guideActivityText");
 const sessionTask = document.getElementById("sessionTask");
 const sessionStep = document.getElementById("sessionStep");
 const sessionIssue = document.getElementById("sessionIssue");
+const generatedGuideSection = document.querySelector(".generatedGuide");
 const generatedGuideCount = document.getElementById("generatedGuideCount");
 const generatedGuideList = document.getElementById("generatedGuideList");
 const autoRefreshButton = document.getElementById("autoRefreshButton");
@@ -358,7 +359,8 @@ function renderSessionDashboard(dashboard = {}) {
   sessionTask.textContent = dashboard.taskRequest || "-";
   sessionStep.textContent = currentStep ? `${currentStep.index} of ${currentStep.total}: ${currentStep.title}` : "-";
   sessionIssue.textContent = dashboard.lastIssue || "-";
-  renderGeneratedGuide(dashboard.generatedGuide || []);
+  generatedGuideSection.hidden = Boolean(dashboard.refreshInProgress);
+  renderGeneratedGuide(dashboard.refreshInProgress ? [] : dashboard.generatedGuide || []);
   currentAutoRefreshPaused = Boolean(dashboard.autoRefreshPaused);
   autoRefreshButton.textContent = currentAutoRefreshPaused ? "Resume auto refresh" : "Pause auto refresh";
   autoRefreshButton.disabled = !dashboard.canPauseAutoRefresh;

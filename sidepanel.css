@@ -168,6 +168,10 @@ textarea {
   min-width: 0;
 }
 
+.generatedGuide[hidden] {
+  display: none;
+}
+
 .generatedGuideHeader {
   display: flex;
   align-items: center;

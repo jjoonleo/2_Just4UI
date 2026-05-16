@@ -220,7 +220,8 @@ Refresh policy:
 - Treat DOM mutations as target-availability checks only.
 - Debounce and coalesce target-missing candidates before requesting refresh.
 - Record step completion before refresh when the same user action both completes the current **Guidance Step** and causes a **Page State Change**.
-- Keep the current guide visible in an updating state while the refresh runs.
+- Remove the current page guide while the refresh request is running, then show refreshed guidance when it is ready.
+- Hide the dashboard's generated guide and current step while the refresh request is running.
 - Show refresh work as **Guide Activity** while the **Guidance Session** remains active.
 - Do not start a second model refresh while one is already running.
 - If page changes happen during a running refresh, queue one follow-up refresh after the current one finishes.

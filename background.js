@@ -313,9 +313,7 @@ async function refreshHostTab(tabId, message = "", options = {}) {
     const apiKey = stored[providerConfig.apiKeyStorageKey];
     if (!apiKey) throw new Error(`${providerConfig.label} API key is missing.`);
 
-    if (isPageStateRefresh) {
-      await renderOverlay(tabId, initialSession, "Checking the updated UI...");
-    }
+    await removeOverlayFromTab(tabId);
 
     await setGuideActivity({
       phase: "extractingPage",
@@ -405,6 +403,9 @@ async function refreshHostTab(tabId, message = "", options = {}) {
         lastError: error.message,
         updatedAt: Date.now(),
       });
+      try {
+        await renderOverlay(tabId, initialSession);
+      } catch {}
       await clearGuideActivity({ lastIssue: error.message });
       return;
     }
@@ -904,8 +905,9 @@ async function clearGuideActivity({
 
 function createSessionDashboard(session, activity) {
   const isWorking = Boolean(activity?.isWorking);
+  const refreshInProgress = isRefreshActivity(session, activity);
   const status = getDashboardStatus(session, activity);
-  const currentStep = getCurrentStepSummary(session);
+  const currentStep = refreshInProgress ? null : getCurrentStepSummary(session);
   const lastIssue = session?.lastError || activity?.lastIssue || "";
 
   return {
@@ -913,7 +915,8 @@ function createSessionDashboard(session, activity) {
     hasSession: Boolean(session),
     taskRequest: session?.taskRequest || activity?.taskRequest || "",
     currentStep,
-    generatedGuide: buildGeneratedGuideSummary(session),
+    generatedGuide: refreshInProgress ? [] : buildGeneratedGuideSummary(session),
+    refreshInProgress,
     lastIssue,
     pendingClarification: session?.pendingClarification || null,
     autoRefreshPaused: Boolean(session?.autoRefreshPaused),
@@ -931,6 +934,13 @@ function createSessionDashboard(session, activity) {
         Number(activity?.updatedAt || 0),
       ) || Date.now(),
   };
+}
+
+function isRefreshActivity(session, activity) {
+  if (!session || !activity?.isWorking) return false;
+  return ["extractingPage", "askingAi", "updatingGuide"].includes(
+    activity.phase,
+  );
 }
 
 function getDashboardStatus(session, activity) {
