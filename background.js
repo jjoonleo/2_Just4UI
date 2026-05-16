@@ -24,7 +24,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "BRIDGE_END_GUIDE" && sender.tab?.id) {
-    expireSession(sender.tab.id).catch(() => {});
+    expireActiveSession().catch(() => {});
   }
 
   return false;
@@ -35,8 +35,12 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   refreshAfterNavigation(tabId).catch(() => {});
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => {
-  expireSession(tabId).catch(() => {});
+chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
+  moveSessionHost(tabId, windowId).catch(() => {});
+});
+
+chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+  handleTabRemoved(tabId, removeInfo).catch(() => {});
 });
 
 async function startGuide({ tabId, provider = "gemini", taskRequest, model }) {
@@ -45,6 +49,9 @@ async function startGuide({ tabId, provider = "gemini", taskRequest, model }) {
   const stored = await chrome.storage.local.get(providerConfig.apiKeyStorageKey);
   const apiKey = stored[providerConfig.apiKeyStorageKey];
   if (!apiKey) throw new Error(`${providerConfig.label} API key is missing.`);
+
+  const tab = await chrome.tabs.get(tabId);
+  if (tab.windowId == null) throw new Error("Guide can only start in a browser window tab.");
 
   const snapshot = await extractSnapshotFromTab(tabId);
   const planningPayload = createPlanningPayload(snapshot);
@@ -59,7 +66,8 @@ async function startGuide({ tabId, provider = "gemini", taskRequest, model }) {
 
   const now = Date.now();
   const session = {
-    tabId,
+    windowId: tab.windowId,
+    hostTabId: tabId,
     provider: modelProvider,
     taskRequest,
     model: model || providerConfig.defaultModel,
@@ -72,16 +80,78 @@ async function startGuide({ tabId, provider = "gemini", taskRequest, model }) {
     updatedAt: now
   };
 
-  await saveSession(tabId, session);
+  await expireActiveSession({ removeOverlay: true });
+  await saveActiveSession(session);
   await renderOverlay(tabId, session);
   return { ok: true };
 }
 
 async function refreshAfterNavigation(tabId) {
-  const session = await getSession(tabId);
+  const session = await getActiveSession();
+  if (!session || session.hostTabId !== tabId) return;
+  await refreshHostTab(tabId, "Guide refreshed for this page.");
+}
+
+async function moveSessionHost(tabId, windowId) {
+  const session = await getActiveSession();
+  if (!session || session.windowId !== windowId) return;
+  if (isExpired(session)) {
+    await expireActiveSession({ removeOverlay: true });
+    return;
+  }
+  if (session.hostTabId === tabId) return;
+
+  const previousHostTabId = session.hostTabId;
+  if (previousHostTabId) await removeOverlayFromTab(previousHostTabId);
+
+  const moved = {
+    ...session,
+    hostTabId: tabId,
+    updatedAt: Date.now()
+  };
+  await saveActiveSession(moved);
+
+  const tab = await chrome.tabs.get(tabId);
+  if (tab.status !== "complete") return;
+  await refreshHostTab(tabId, "Guide moved to this tab.");
+}
+
+async function handleTabRemoved(tabId, removeInfo) {
+  const session = await getActiveSession();
+  if (!session || session.hostTabId !== tabId || session.windowId !== removeInfo.windowId) return;
+
+  if (removeInfo.isWindowClosing) {
+    await expireActiveSession();
+    return;
+  }
+
+  const [activeTab] = await chrome.tabs.query({ active: true, windowId: session.windowId });
+  if (!activeTab?.id) {
+    await saveActiveSession({
+      ...session,
+      hostTabId: null,
+      status: "paused",
+      lastError: "No active tab is available in the session window.",
+      updatedAt: Date.now()
+    });
+    return;
+  }
+
+  await saveActiveSession({
+    ...session,
+    hostTabId: activeTab.id,
+    updatedAt: Date.now()
+  });
+
+  if (activeTab.status !== "complete") return;
+  await refreshHostTab(activeTab.id, "Guide moved after the previous tab closed.");
+}
+
+async function refreshHostTab(tabId, message = "") {
+  const session = await getActiveSession();
   if (!session) return;
   if (isExpired(session)) {
-    await expireSession(tabId);
+    await expireActiveSession({ removeOverlay: true });
     return;
   }
 
@@ -105,22 +175,25 @@ async function refreshAfterNavigation(tabId) {
 
     const refreshed = {
       ...session,
+      hostTabId: tabId,
       plan: refreshedPlan,
       currentStepIndex: 0,
       status: "active",
       consecutiveRefreshFailures: 0,
       updatedAt: Date.now()
     };
-    await saveSession(tabId, refreshed);
-    await renderOverlay(tabId, refreshed, "Guide refreshed for this page.");
+    await saveActiveSession(refreshed);
+    await renderOverlay(tabId, refreshed, message);
   } catch (error) {
     if (session.status === "paused" || session.consecutiveRefreshFailures >= 1) {
-      await expireSession(tabId);
+      await expireActiveSession({ removeOverlay: true });
       return;
     }
 
-    await saveSession(tabId, {
+    await removeOverlayFromTab(tabId);
+    await saveActiveSession({
       ...session,
+      hostTabId: tabId,
       status: "paused",
       consecutiveRefreshFailures: session.consecutiveRefreshFailures + 1,
       lastError: error.message,
@@ -130,8 +203,8 @@ async function refreshAfterNavigation(tabId) {
 }
 
 async function updateProgress(tabId, message) {
-  const session = await getSession(tabId);
-  if (!session) return;
+  const session = await getActiveSession();
+  if (!session || session.hostTabId !== tabId) return;
 
   const nextIndex = Number.isInteger(message.currentStepIndex) ? message.currentStepIndex : session.currentStepIndex;
   const completedStep = message.completedStep;
@@ -140,7 +213,7 @@ async function updateProgress(tabId, message) {
     completedStepSummaries.push(completedStep);
   }
 
-  await saveSession(tabId, {
+  await saveActiveSession({
     ...session,
     currentStepIndex: nextIndex,
     completedStepSummaries: completedStepSummaries.slice(-12),
@@ -165,26 +238,30 @@ async function renderOverlay(tabId, session, message = "") {
   });
 }
 
-async function getSessions() {
+async function removeOverlayFromTab(tabId) {
+  if (!tabId) return;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: removeGuidedTaskOverlay
+    });
+  } catch {}
+}
+
+async function getActiveSession() {
   const stored = await chrome.storage.local.get(SESSION_STORAGE_KEY);
-  return stored[SESSION_STORAGE_KEY] || {};
+  const session = stored[SESSION_STORAGE_KEY];
+  return session?.taskRequest ? session : null;
 }
 
-async function getSession(tabId) {
-  const sessions = await getSessions();
-  return sessions[String(tabId)] || null;
+async function saveActiveSession(session) {
+  await chrome.storage.local.set({ [SESSION_STORAGE_KEY]: session });
 }
 
-async function saveSession(tabId, session) {
-  const sessions = await getSessions();
-  sessions[String(tabId)] = session;
-  await chrome.storage.local.set({ [SESSION_STORAGE_KEY]: sessions });
-}
-
-async function expireSession(tabId) {
-  const sessions = await getSessions();
-  delete sessions[String(tabId)];
-  await chrome.storage.local.set({ [SESSION_STORAGE_KEY]: sessions });
+async function expireActiveSession({ removeOverlay = false } = {}) {
+  const session = await getActiveSession();
+  if (removeOverlay && session?.hostTabId) await removeOverlayFromTab(session.hostTabId);
+  await chrome.storage.local.remove(SESSION_STORAGE_KEY);
 }
 
 function isExpired(session) {
@@ -263,7 +340,7 @@ async function createGeminiGuidancePlan({ apiKey, model, taskRequest, planningPa
             "Never ask the extension to click, type, submit, purchase, delete, or confirm for the user.",
             "Each step must point to one primary target from the current planning payload.",
             "Use risk=high for checkout, payment, personal information submission, account deletion, or destructive actions.",
-            "If previousSession is present, continue the user's same-tab task from the new page evidence.",
+            "If previousSession is present, continue the user's task from the active tab's new page evidence.",
             "Use empty strings for unknown optional target or completion fields.",
             "",
             JSON.stringify({ taskRequest, previousSession, planningPayload })
@@ -308,7 +385,7 @@ async function createOpenAiGuidancePlan({ apiKey, model, taskRequest, planningPa
         "Never ask the extension to click, type, submit, purchase, delete, or confirm for the user.",
         "Each step must point to one primary target from the current planning payload.",
         "Use risk=high for checkout, payment, personal information submission, account deletion, or destructive actions.",
-        "If previousSession is present, continue the user's same-tab task from the new page evidence.",
+        "If previousSession is present, continue the user's task from the active tab's new page evidence.",
         "Use empty strings for unknown optional target or completion fields."
       ].join(" "),
       input: JSON.stringify({ taskRequest, previousSession, planningPayload }),
@@ -731,6 +808,16 @@ function collectPageSnapshotForGuide() {
     if (window.CSS?.escape) return CSS.escape(value);
     return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
   }
+}
+
+function removeGuidedTaskOverlay() {
+  const ROOT_ID = "bridge-guided-task-root";
+  const HIGHLIGHT_ID = "bridge-guided-task-highlight";
+  const ACTIVE_CLASS = "bridge-guided-task-active-target";
+  if (typeof window.__bridgeGuidedTaskCleanup === "function") window.__bridgeGuidedTaskCleanup();
+  document.getElementById(ROOT_ID)?.remove();
+  document.getElementById(HIGHLIGHT_ID)?.remove();
+  document.querySelectorAll(`.${ACTIVE_CLASS}`).forEach((element) => element.classList.remove(ACTIVE_CLASS));
 }
 
 function installGuidedTaskOverlay(plan, options = {}) {
