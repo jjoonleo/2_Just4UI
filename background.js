@@ -1,4 +1,5 @@
 const SESSION_STORAGE_KEY = "bridgeGuidanceSessions";
+const ACTIVITY_STORAGE_KEY = "bridgeGuidanceActivity";
 const PROVIDER_CONFIG = {
   gemini: {
     apiKeyStorageKey: "bridgeGeminiApiKey",
@@ -31,12 +32,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "BRIDGE_GET_SESSION_DASHBOARD") {
+    getSessionDashboard().then((dashboard) => sendResponse({ ok: true, dashboard })).catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === "BRIDGE_END_ACTIVE_GUIDE") {
+    endActiveGuideFromDashboard().then(sendResponse).catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message?.type === "BRIDGE_GUIDE_PROGRESS" && sender.tab?.id) {
     updateProgress(sender.tab.id, message).catch(() => {});
   }
 
   if (message?.type === "BRIDGE_END_GUIDE" && sender.tab?.id) {
-    expireActiveSession().catch(() => {});
+    expireActiveSession({ removeOverlay: false, terminalStatus: "ended" }).catch(() => {});
   }
 
   return false;
@@ -58,44 +69,73 @@ chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
 async function startGuide({ tabId, provider = "gemini", taskRequest, model }) {
   const modelProvider = normalizeProvider(provider);
   const providerConfig = PROVIDER_CONFIG[modelProvider];
-  const stored = await chrome.storage.local.get(providerConfig.apiKeyStorageKey);
-  const apiKey = stored[providerConfig.apiKeyStorageKey];
-  if (!apiKey) throw new Error(`${providerConfig.label} API key is missing.`);
 
-  const tab = await chrome.tabs.get(tabId);
-  if (tab.windowId == null) throw new Error("Guide can only start in a browser window tab.");
+  try {
+    await setGuideActivity({
+      phase: "extractingPage",
+      message: "Extracting page",
+      taskRequest
+    });
 
-  const snapshot = await extractSnapshotFromTab(tabId);
-  const planningPayload = createPlanningPayload(snapshot);
-  const plan = await createGuidancePlan({
-    provider: modelProvider,
-    apiKey,
-    model: model || providerConfig.defaultModel,
-    taskRequest,
-    planningPayload,
-    previousSession: null
-  });
+    const stored = await chrome.storage.local.get(providerConfig.apiKeyStorageKey);
+    const apiKey = stored[providerConfig.apiKeyStorageKey];
+    if (!apiKey) throw new Error(`${providerConfig.label} API key is missing.`);
 
-  const now = Date.now();
-  const session = {
-    windowId: tab.windowId,
-    hostTabId: tabId,
-    provider: modelProvider,
-    taskRequest,
-    model: model || providerConfig.defaultModel,
-    plan,
-    currentStepIndex: 0,
-    completedStepSummaries: [],
-    status: "active",
-    consecutiveRefreshFailures: 0,
-    createdAt: now,
-    updatedAt: now
-  };
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.windowId == null) throw new Error("Guide can only start in a browser window tab.");
 
-  await expireActiveSession({ removeOverlay: true });
-  await saveActiveSession(session);
-  await renderOverlay(tabId, session);
-  return { ok: true };
+    const snapshot = await extractSnapshotFromTab(tabId);
+    const planningPayload = createPlanningPayload(snapshot);
+
+    await setGuideActivity({
+      phase: "askingAi",
+      message: `Asking ${providerConfig.label}`,
+      taskRequest
+    });
+
+    const plan = await createGuidancePlan({
+      provider: modelProvider,
+      apiKey,
+      model: model || providerConfig.defaultModel,
+      taskRequest,
+      planningPayload,
+      previousSession: null
+    });
+
+    await setGuideActivity({
+      phase: "updatingGuide",
+      message: "Updating guide",
+      taskRequest
+    });
+
+    const now = Date.now();
+    const session = {
+      windowId: tab.windowId,
+      hostTabId: tabId,
+      provider: modelProvider,
+      taskRequest,
+      model: model || providerConfig.defaultModel,
+      plan,
+      currentStepIndex: 0,
+      completedStepSummaries: [],
+      status: "active",
+      consecutiveRefreshFailures: 0,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    await renderOverlay(tabId, session);
+    const previousSession = await getActiveSession();
+    await saveActiveSession(session);
+    if (previousSession?.hostTabId && previousSession.hostTabId !== tabId) {
+      await removeOverlayFromTab(previousSession.hostTabId);
+    }
+    await clearGuideActivity();
+    return { ok: true };
+  } catch (error) {
+    await clearGuideActivity({ lastIssue: `New guide failed: ${error.message}` });
+    throw error;
+  }
 }
 
 async function refreshAfterNavigation(tabId) {
@@ -163,7 +203,7 @@ async function refreshHostTab(tabId, message = "") {
   const session = await getActiveSession();
   if (!session) return;
   if (isExpired(session)) {
-    await expireActiveSession({ removeOverlay: true });
+    await expireActiveSession({ removeOverlay: true, terminalStatus: "ended" });
     return;
   }
 
@@ -174,8 +214,21 @@ async function refreshHostTab(tabId, message = "") {
     const apiKey = stored[providerConfig.apiKeyStorageKey];
     if (!apiKey) throw new Error(`${providerConfig.label} API key is missing.`);
 
+    await setGuideActivity({
+      phase: "extractingPage",
+      message: "Extracting page",
+      taskRequest: session.taskRequest
+    });
+
     const snapshot = await extractSnapshotFromTab(tabId);
     const planningPayload = createPlanningPayload(snapshot);
+
+    await setGuideActivity({
+      phase: "askingAi",
+      message: `Asking ${providerConfig.label}`,
+      taskRequest: session.taskRequest
+    });
+
     const refreshedPlan = await createGuidancePlan({
       provider: modelProvider,
       apiKey,
@@ -183,6 +236,12 @@ async function refreshHostTab(tabId, message = "") {
       taskRequest: session.taskRequest,
       planningPayload,
       previousSession: summarizeSession(session)
+    });
+
+    await setGuideActivity({
+      phase: "updatingGuide",
+      message: "Updating guide",
+      taskRequest: session.taskRequest
     });
 
     const refreshed = {
@@ -196,9 +255,10 @@ async function refreshHostTab(tabId, message = "") {
     };
     await saveActiveSession(refreshed);
     await renderOverlay(tabId, refreshed, message);
+    await clearGuideActivity();
   } catch (error) {
     if (session.status === "paused" || session.consecutiveRefreshFailures >= 1) {
-      await expireActiveSession({ removeOverlay: true });
+      await expireActiveSession({ removeOverlay: true, terminalStatus: "failed", lastIssue: error.message });
       return;
     }
 
@@ -211,6 +271,7 @@ async function refreshHostTab(tabId, message = "") {
       lastError: error.message,
       updatedAt: Date.now()
     });
+    await clearGuideActivity({ lastIssue: error.message });
   }
 }
 
@@ -260,6 +321,21 @@ async function removeOverlayFromTab(tabId) {
   } catch {}
 }
 
+async function getSessionDashboard() {
+  const [session, activity] = await Promise.all([getActiveSession(), getGuideActivity()]);
+  return createSessionDashboard(session, activity);
+}
+
+async function endActiveGuideFromDashboard() {
+  await setGuideActivity({
+    phase: "endingGuide",
+    message: "Ending guide"
+  });
+  await expireActiveSession({ removeOverlay: true, clearActivity: false, notify: false });
+  await clearGuideActivity({ terminalStatus: "ended" });
+  return { ok: true };
+}
+
 async function getActiveSession() {
   const stored = await chrome.storage.local.get(SESSION_STORAGE_KEY);
   const session = stored[SESSION_STORAGE_KEY];
@@ -268,12 +344,115 @@ async function getActiveSession() {
 
 async function saveActiveSession(session) {
   await chrome.storage.local.set({ [SESSION_STORAGE_KEY]: session });
+  await notifyDashboardChanged();
 }
 
-async function expireActiveSession({ removeOverlay = false } = {}) {
+async function expireActiveSession({ removeOverlay = false, clearActivity = true, terminalStatus = "ended", lastIssue = "", notify = true } = {}) {
   const session = await getActiveSession();
   if (removeOverlay && session?.hostTabId) await removeOverlayFromTab(session.hostTabId);
   await chrome.storage.local.remove(SESSION_STORAGE_KEY);
+  if (clearActivity) {
+    await clearGuideActivity({ terminalStatus, lastIssue, notify });
+  } else if (notify) {
+    await notifyDashboardChanged();
+  }
+}
+
+async function getGuideActivity() {
+  const stored = await chrome.storage.local.get(ACTIVITY_STORAGE_KEY);
+  return stored[ACTIVITY_STORAGE_KEY] || null;
+}
+
+async function setGuideActivity({ phase, message, taskRequest = "" }) {
+  const now = Date.now();
+  const previous = await getGuideActivity();
+  await chrome.storage.local.set({
+    [ACTIVITY_STORAGE_KEY]: {
+      isWorking: true,
+      phase,
+      message,
+      taskRequest,
+      startedAt: previous?.isWorking ? previous.startedAt : now,
+      updatedAt: now,
+      lastIssue: previous?.lastIssue || "",
+      terminalStatus: ""
+    }
+  });
+  await notifyDashboardChanged();
+}
+
+async function clearGuideActivity({ lastIssue = "", terminalStatus = "", notify = true } = {}) {
+  const previous = await getGuideActivity();
+  const nextActivity = {
+    isWorking: false,
+    phase: "",
+    message: "",
+    taskRequest: "",
+    startedAt: previous?.startedAt || null,
+    updatedAt: Date.now(),
+    lastIssue,
+    terminalStatus
+  };
+  await chrome.storage.local.set({ [ACTIVITY_STORAGE_KEY]: nextActivity });
+  if (notify) await notifyDashboardChanged();
+}
+
+function createSessionDashboard(session, activity) {
+  const isWorking = Boolean(activity?.isWorking);
+  const status = getDashboardStatus(session, activity);
+  const currentStep = getCurrentStepSummary(session);
+  const lastIssue = session?.lastError || activity?.lastIssue || "";
+
+  return {
+    status,
+    hasSession: Boolean(session),
+    taskRequest: session?.taskRequest || activity?.taskRequest || "",
+    currentStep,
+    lastIssue,
+    activity: {
+      isWorking,
+      phase: activity?.phase || "",
+      message: activity?.message || "",
+      startedAt: activity?.startedAt || null,
+      updatedAt: activity?.updatedAt || null
+    },
+    updatedAt: Math.max(Number(session?.updatedAt || 0), Number(activity?.updatedAt || 0)) || Date.now()
+  };
+}
+
+function getDashboardStatus(session, activity) {
+  if (session?.status === "paused") return "paused";
+  if (session?.status === "active") return "active";
+  if (activity?.isWorking) return "planning";
+  if (activity?.terminalStatus === "ended") return "ended";
+  if (activity?.terminalStatus === "failed") return "failed";
+  return "noGuide";
+}
+
+function getCurrentStepSummary(session) {
+  if (!session?.plan?.steps?.length) return null;
+  const total = session.plan.steps.length;
+  if ((session.currentStepIndex || 0) >= total) {
+    return {
+      index: total,
+      total,
+      title: "Guide complete"
+    };
+  }
+  const currentStepIndex = Math.max(0, session.currentStepIndex || 0);
+  const step = session.plan.steps[currentStepIndex];
+  return {
+    index: currentStepIndex + 1,
+    total,
+    title: step?.title || ""
+  };
+}
+
+async function notifyDashboardChanged() {
+  try {
+    const dashboard = await getSessionDashboard();
+    await chrome.runtime.sendMessage({ type: "BRIDGE_SESSION_CHANGED", dashboard });
+  } catch {}
 }
 
 function isExpired(session) {

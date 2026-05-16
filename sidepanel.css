@@ -50,20 +50,123 @@ textarea {
   color: var(--muted);
 }
 
-.controls,
+.sessionDashboard,
 .guidePanel,
-.statusPanel,
-.summary,
-.actions {
+.statusPanel {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
 }
 
-.controls {
+.sessionDashboard {
   display: grid;
   gap: 12px;
+}
+
+.sessionDashboardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sessionDashboard h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.sessionDashboard p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.statusBadge {
+  flex: 0 0 auto;
+  max-width: 120px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #f3f5f8;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.statusBadge.planning,
+.statusBadge.active {
+  border-color: #b9d5ed;
+  background: #eef6fd;
+  color: var(--accent-dark);
+}
+
+.statusBadge.paused {
+  border-color: #f0d28d;
+  background: #fff8e5;
+  color: #765400;
+}
+
+.statusBadge.failed {
+  border-color: #f1b8b4;
+  background: #fff4f3;
+  color: var(--danger);
+}
+
+.statusBadge.ended {
+  border-color: #c8d9cd;
+  background: #eef8f0;
+  color: #23612f;
+}
+
+.guideActivity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #b9d5ed;
+  border-radius: 6px;
+  background: #eef6fd;
+  padding: 9px 10px;
+  color: var(--accent-dark);
+  font-weight: 800;
+}
+
+.guideActivity[hidden] {
+  display: none;
+}
+
+.sessionDetails {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.sessionDetails div {
+  min-width: 0;
+}
+
+.sessionDetails dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sessionDetails dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.secondaryAction {
+  border-color: var(--line);
+  background: #ffffff;
+  color: var(--text);
+}
+
+.secondaryAction:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: #eef6fd;
 }
 
 .guidePanel {
@@ -131,18 +234,6 @@ textarea {
   background: #eef6fd;
 }
 
-.option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text);
-}
-
-.option input {
-  width: 18px;
-  height: 18px;
-}
-
 button {
   min-height: 40px;
   border: 1px solid var(--accent);
@@ -199,44 +290,4 @@ button:disabled {
   to {
     transform: rotate(360deg);
   }
-}
-
-.summary dl {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  margin: 0;
-}
-
-.summary div {
-  min-width: 0;
-}
-
-.summary dt {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.summary dd {
-  margin: 2px 0 0;
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-#output {
-  width: 100%;
-  min-height: 360px;
-  resize: vertical;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 12px;
-  background: var(--panel);
-  color: var(--text);
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }

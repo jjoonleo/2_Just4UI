@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Bridge Page Snapshot",
-  "description": "Extracts a privacy-conscious snapshot of the current page for accessibility simplification research.",
+  "name": "Bridge Guided Task Mode",
+  "description": "Guides users through tasks on the original browser page with model-generated steps.",
   "version": "0.1.0",
   "action": {
     "default_title": "Open Bridge side panel"

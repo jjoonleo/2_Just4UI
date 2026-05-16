@@ -88,6 +88,22 @@ _Avoid_: Reusing stale selectors, starting over silently
 The minimal information needed to continue a Guidance Session after page changes.
 _Avoid_: Snapshot history, full-page archive, simultaneous tab memory
 
+**Session Status**:
+The user-visible lifecycle position of a Guidance Session.
+_Avoid_: Generic session flag, hidden internal state, stopped
+
+**Guide Activity**:
+A temporary indication that the extension is preparing, creating, refreshing, or presenting guidance for a Guidance Session.
+_Avoid_: Session status, background monitor, invisible AI work
+
+**Guide Activity Phase**:
+A short user-visible reason why Guide Activity is currently in progress.
+_Avoid_: Debug log, internal implementation step, hidden AI request
+
+**Session Dashboard**:
+The user-visible view of the current Guidance Session's status and activity.
+_Avoid_: Disposable start form, debug console, hidden session state
+
 **Session Expiry**:
 The conditions that end a Guidance Session so it cannot unexpectedly resume later.
 _Avoid_: Indefinite guide, hidden background continuation
@@ -126,11 +142,21 @@ _Avoid_: Any Chrome window, global browser scope, profile-wide guide
 - A **Plan Contract** makes a **Guidance Plan** predictable enough for the extension to render.
 - A **Guidance Session** follows one **Guidance Plan** at a time.
 - Starting a new **Guidance Session** replaces any existing **Guidance Session**.
+- A replacement **Guidance Session** should not remove the existing **Guidance Session** until the new **Guidance Plan** is ready.
 - A **Navigating Guidance Session** may use multiple **Page Snapshots** as the user moves through pages or active tabs in one browser window.
 - A **Plan Refresh** uses the latest **Page Snapshot** to continue a **Navigating Guidance Session**.
 - A **Plan Refresh** happens when the **Session Host Tab** changes.
 - **Session State** preserves progress without retaining old full Page Snapshots by default.
 - **Session State** preserves completed step history across **Plan Refresh**.
+- **Session Status** tells the user whether the **Guidance Session** has no guide, is planning, active, paused, ended, or failed.
+- **Guide Activity** may appear while the extension extracts page evidence, creates or refreshes a **Guidance Plan**, or updates the visible guidance.
+- **Guide Activity Phase** explains the current **Guide Activity**.
+- **Guide Activity** does not replace **Session Status**.
+- Failed **Guide Activity** does not make a **Guidance Session** failed when the current **Guidance Plan** can still continue.
+- A **Session Dashboard** presents the current **Session Status** and **Guide Activity** for the **Guidance Session**.
+- A **Session Dashboard** may present the **Task Request**, current **Guidance Step**, and latest pause or failure reason.
+- A **Session Dashboard** may be reopened without losing the current **Guidance Session** view.
+- A **Session Dashboard** may let the user end an active or paused **Guidance Session**.
 - **Session Expiry** ends stale or failed **Guidance Sessions**.
 - A **Paused Guidance Session** may resume on the next supported page in the same Session Window.
 - A **Guidance Session** has at most one **Session Host Tab** at a time.

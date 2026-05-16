@@ -3,25 +3,48 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Bridge Page Snapshot</title>
+    <title>Bridge Guided Task Mode</title>
     <link rel="stylesheet" href="sidepanel.css">
   </head>
   <body>
     <main class="shell">
       <header class="header">
         <div>
-          <h1>Page Snapshot</h1>
-          <p>Extract the active page after you choose to inspect it.</p>
+          <h1>Guided Task Mode</h1>
+          <p>Follow step-by-step guidance on the original page.</p>
         </div>
       </header>
 
-      <section class="controls" aria-label="Snapshot controls">
-        <label class="option">
-          <input id="includeScreenshot" type="checkbox">
-          <span>Include visible screenshot</span>
-        </label>
+      <section class="sessionDashboard" aria-label="Guidance session" aria-live="polite">
+        <div class="sessionDashboardHeader">
+          <div>
+            <h2>Guidance Session</h2>
+            <p id="sessionStatusText">No guide is running.</p>
+          </div>
+          <span id="sessionStatusBadge" class="statusBadge noGuide">No guide</span>
+        </div>
 
-        <button id="extractButton" type="button">Extract current page</button>
+        <div id="guideActivity" class="guideActivity" hidden>
+          <span class="spinner" aria-hidden="true"></span>
+          <span id="guideActivityText">Preparing guide...</span>
+        </div>
+
+        <dl class="sessionDetails">
+          <div>
+            <dt>Task request</dt>
+            <dd id="sessionTask">-</dd>
+          </div>
+          <div>
+            <dt>Current step</dt>
+            <dd id="sessionStep">-</dd>
+          </div>
+          <div>
+            <dt>Last issue</dt>
+            <dd id="sessionIssue">-</dd>
+          </div>
+        </dl>
+
+        <button id="endGuideButton" class="secondaryAction" type="button" disabled>End guide</button>
       </section>
 
       <section class="guidePanel" aria-label="Guided task mode">
@@ -67,33 +90,6 @@
         <p id="status">Ready.</p>
       </section>
 
-      <section class="summary" aria-label="Snapshot summary">
-        <dl>
-          <div>
-            <dt>Text blocks</dt>
-            <dd id="textCount">0</dd>
-          </div>
-          <div>
-            <dt>Interactive</dt>
-            <dd id="interactiveCount">0</dd>
-          </div>
-          <div>
-            <dt>Forms</dt>
-            <dd id="formCount">0</dd>
-          </div>
-          <div>
-            <dt>Images</dt>
-            <dd id="imageCount">0</dd>
-          </div>
-        </dl>
-      </section>
-
-      <section class="actions" aria-label="Snapshot actions">
-        <button id="copyButton" type="button" disabled>Copy JSON</button>
-        <button id="downloadButton" type="button" disabled>Download JSON</button>
-      </section>
-
-      <textarea id="output" spellcheck="false" aria-label="Extracted snapshot JSON" placeholder="Snapshot JSON will appear here."></textarea>
     </main>
 
     <script src="sidepanel.js"></script>
