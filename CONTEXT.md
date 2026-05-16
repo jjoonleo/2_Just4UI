@@ -28,53 +28,73 @@ _Avoid_: Snapshot history, background archive
 The first milestone where Page Snapshots are produced and inspected locally before any model receives them.
 _Avoid_: Immediate model call, automatic AI processing
 
-**AI Patch Request**:
-A model input derived from a Page Snapshot that asks for presentation-only page changes.
-_Avoid_: Raw HTML prompt, page regeneration prompt
+**Guided Task Mode**:
+A user-requested assistance flow that guides the user through a task on the original page without replacing the page's own interface.
+_Avoid_: Simplified UI, regenerated page, automatic task execution
 
-**AI Patch Workflow**:
-A staged model-assisted flow that turns one Page Snapshot into one validated Patch Plan.
-_Avoid_: One-shot redesign, automatic AI pipeline
+**Guide-Only Assistance**:
+A Guided Task Mode boundary where the extension explains, highlights, scrolls, and observes while the user performs every page action.
+_Avoid_: Auto-clicking, auto-typing, auto-submit
 
-**Page Analysis**:
-A model-produced interpretation of page type, primary tasks, critical content, and Preserved Interactive Nodes.
-_Avoid_: Final design, patch output
+**Task Request**:
+A user-written description of what the user wants to accomplish on the current page.
+_Avoid_: Command, automation prompt, saved workflow
 
-**Simplification Strategy**:
-A model-produced presentation direction that guides a Patch Plan without directly changing the page.
-_Avoid_: CSS patch, implementation plan
+**Task Template**:
+A reusable suggested Task Request for a common page goal.
+_Avoid_: Required workflow, hardcoded site script
 
-**Patch Repair Request**:
-A model input derived from a rejected Patch Plan and local validation errors.
-_Avoid_: AI safety approval, trusted validation
+**Guidance Step**:
+One instruction in Guided Task Mode tied to one primary target on the original page.
+_Avoid_: Multi-action instruction, automation step, script command
 
-**Patch Plan**:
-A selector-based set of CSS and safe DOM presentation operations returned by a model.
-_Avoid_: Generated page, replacement HTML
+**Page Target**:
+The original page element a Guidance Step points the user toward.
+_Avoid_: Permanent selector, copied DOM node
 
-**Live UI Patch**:
-A presentation layer applied to the currently loaded browser page without rebuilding the page.
-_Avoid_: Full regeneration, page clone
+**Target Recovery**:
+A one-time re-scan of the current page to find a Page Target again after the page changes.
+_Avoid_: Silent retargeting, infinite retry
 
-**Simplified Shell**:
-A task-first presentation surface that reorganizes original page nodes into a smaller interface.
-_Avoid_: Replacement page, regenerated UI
+**Risk Gate**:
+A warning boundary in Guided Task Mode before sensitive or irreversible user actions.
+_Avoid_: Silent final action, hidden confirmation, automatic purchase
 
-**Shell Slot**:
-A named region inside a Simplified Shell where original page nodes can be placed by task priority.
-_Avoid_: Generated card, fake control
+**Guidance Plan**:
+A sequence of Guidance Steps created for one Task Request on one current page.
+_Avoid_: Browser automation script, regenerated page
 
-**Original Node Relocation**:
-Moving an existing non-interactive page node into a Shell Slot while preserving it as the same DOM element.
-_Avoid_: Clone, copy, recreate
+**Planning Payload**:
+A reduced Page Snapshot view sent to a model for creating a Guidance Plan.
+_Avoid_: Full raw snapshot, form values, default screenshot upload
 
-**Original Node Reference**:
-A shell action that activates or reveals an original interactive node without moving it out of its page context.
-_Avoid_: Fake button, cloned control
+**Plan Contract**:
+The required structured shape of a Guidance Plan returned by a model.
+_Avoid_: Free-form model answer, unvalidated instructions
 
-**Preserved Interactive Node**:
-An original clickable or form element that remains the source of browser behavior.
-_Avoid_: Recreated button, cloned control
+**Guidance Session**:
+The one active Guided Task Mode run the user is currently following.
+_Avoid_: Saved plan history, background monitor, multi-plan queue
+
+**Navigating Guidance Session**:
+A Guidance Session that continues when the user moves to another page in the same browser tab.
+_Avoid_: Cross-tab guide, global browsing session, saved workflow
+
+**Plan Refresh**:
+An update to a Guidance Plan after same-tab navigation using the new page evidence.
+_Avoid_: Reusing stale selectors, starting over silently
+
+**Session State**:
+The minimal information needed to continue a Guidance Session after page changes.
+_Avoid_: Snapshot history, full-page archive, cross-tab memory
+
+**Session Expiry**:
+The conditions that end a Guidance Session so it cannot unexpectedly resume later.
+_Avoid_: Indefinite guide, hidden background continuation
+
+**Paused Guidance Session**:
+A Guidance Session waiting for a supported page after a navigation where extraction or overlay injection failed.
+_Avoid_: Silent failure, broken active guide
 
 ## Relationships
 
@@ -84,18 +104,24 @@ _Avoid_: Recreated button, cloned control
 - A **Page Snapshot** may include one **Visual Snapshot** when the user explicitly enables screenshot capture.
 - A **Page Snapshot** is a **One-Time Result** unless the user explicitly copies or downloads it.
 - **Local Extraction** produces **Page Snapshots** without sending them to a model.
-- An **AI Patch Request** is created from one **Page Snapshot** and predefined extension safety rules, and excludes user-entered form values.
-- An **AI Patch Workflow** starts from one **Page Snapshot** and ends with at most one applied **Live UI Patch**.
-- An **AI Patch Workflow** may ask a model for **Page Analysis**, then a **Simplification Strategy**, then a **Patch Plan**.
-- A **Page Analysis** identifies **Preserved Interactive Nodes** before presentation changes are planned.
-- A **Simplification Strategy** guides one **Patch Plan**.
-- A **Patch Repair Request** may be created after local validation rejects a **Patch Plan**.
-- A **Patch Plan** applies one **Live UI Patch** to the current browser page.
-- A **Live UI Patch** must keep every **Preserved Interactive Node** as the original source of behavior.
-- A **Live UI Patch** may create one **Simplified Shell** for the active page.
-- A **Simplified Shell** contains one or more **Shell Slots**.
-- **Original Node Relocation** moves non-interactive original nodes into **Shell Slots** without recreating them.
-- An **Original Node Reference** activates or reveals a **Preserved Interactive Node** while leaving that node in its original page context.
+- **Guided Task Mode** uses a **Page Snapshot** to guide the user on the original browser page.
+- **Guide-Only Assistance** keeps page actions under the user's direct control.
+- A **Task Request** starts one **Guided Task Mode** flow.
+- A **Task Template** may prefill a **Task Request**.
+- A **Guidance Step** points to one primary page target.
+- A **Page Target** is matched from page evidence such as role, label, text, location, and selector.
+- **Target Recovery** may update a **Page Target** once when the original match is missing.
+- A **Risk Gate** may appear before a **Guidance Step** that involves sensitive or irreversible consequences.
+- A **Guidance Plan** is created from one **Task Request** and one **Page Snapshot**.
+- A **Guidance Plan** contains one or more **Guidance Steps**.
+- A **Planning Payload** is derived from a **Page Snapshot** without form values.
+- A **Plan Contract** makes a **Guidance Plan** predictable enough for the extension to render.
+- A **Guidance Session** follows one **Guidance Plan** at a time.
+- A **Navigating Guidance Session** may use multiple **Page Snapshots** as the user moves through pages in one tab.
+- A **Plan Refresh** uses the latest **Page Snapshot** to continue a **Navigating Guidance Session**.
+- **Session State** preserves progress without retaining old full Page Snapshots by default.
+- **Session Expiry** ends stale or failed **Guidance Sessions**.
+- A **Paused Guidance Session** may resume on the next supported page in the same tab.
 
 ## Example dialogue
 
@@ -117,21 +143,66 @@ _Avoid_: Recreated button, cloned control
 > **Dev:** "Should we call Gemini as soon as extraction works?"
 > **Domain expert:** "No — start with **Local Extraction** so we can inspect the **Page Snapshot** shape first."
 >
-> **Dev:** "Should Gemini return a whole replacement product page?"
-> **Domain expert:** "No — Gemini should return a **Patch Plan** for a **Live UI Patch**, and the original purchase buttons remain **Preserved Interactive Nodes**."
+> **Dev:** "Should the extension rebuild the page into a simpler version?"
+> **Domain expert:** "No — use **Guided Task Mode** to guide the user on the original page so the page's own behavior remains intact."
 >
-> **Dev:** "Should the first **AI Patch Workflow** call Gemini directly?"
-> **Domain expert:** "No — keep it as a copy/paste staged prototype until the intermediate outputs and validation rules are stable."
+> **Dev:** "Can **Guided Task Mode** click the buy button for the user?"
+> **Domain expert:** "No — **Guide-Only Assistance** may point to the button, but the user must perform the action."
 >
-> **Dev:** "How do we make the page dramatically simpler without breaking login or reservation buttons?"
-> **Domain expert:** "Use a **Simplified Shell**, but keep controls as **Preserved Interactive Nodes** in their original context and expose usable shell actions through **Original Node References**."
+> **Dev:** "Should users choose only from predefined tasks?"
+> **Domain expert:** "No — the user should be able to enter a **Task Request**, while **Task Templates** can help with common goals later."
+>
+> **Dev:** "Can one **Guidance Step** ask the user to choose quantity, add to cart, and confirm?"
+> **Domain expert:** "No — split that into separate **Guidance Steps** so each step has one primary target."
+>
+> **Dev:** "Should a missing target make the guide fail immediately?"
+> **Domain expert:** "No — try **Target Recovery** once, then show a clear target-not-found state if the target still cannot be matched."
+>
+> **Dev:** "Can **Guided Task Mode** guide the user to final checkout?"
+> **Domain expert:** "Yes, but use a **Risk Gate** so the user understands the sensitive consequence before acting."
+>
+> **Dev:** "Does **Guided Task Mode** stay local only?"
+> **Domain expert:** "No — after **Local Extraction** proves the Page Snapshot shape, **Guided Task Mode** may use a model to create a **Guidance Plan**."
+>
+> **Dev:** "Should the model receive the full JSON result?"
+> **Domain expert:** "No — send a **Planning Payload** with only the page evidence needed to create a **Guidance Plan**."
+>
+> **Dev:** "Can the model return normal prose?"
+> **Domain expert:** "No — it must return a **Plan Contract** so **Guided Task Mode** can render and track each step."
+>
+> **Dev:** "Can the user keep multiple saved plans running?"
+> **Domain expert:** "No — one **Guidance Session** follows one **Guidance Plan** at a time."
+>
+> **Dev:** "Should the guide continue if the user moves to another page?"
+> **Domain expert:** "Yes, a **Navigating Guidance Session** should continue across pages in the same browser tab."
+>
+> **Dev:** "Should the old plan be reused after navigation?"
+> **Domain expert:** "No — use **Plan Refresh** so the guide is based on the new page evidence."
+>
+> **Dev:** "Should the extension keep every Page Snapshot from the journey?"
+> **Domain expert:** "No — keep only **Session State** and extract a fresh **Page Snapshot** after navigation."
+>
+> **Dev:** "Should a guide resume forever until manually removed?"
+> **Domain expert:** "No — use **Session Expiry** when the user ends it, the tab closes, a new guide starts, refresh fails, or the session becomes stale."
+>
+> **Dev:** "Should unsupported pages immediately end a guide?"
+> **Domain expert:** "No — make it a **Paused Guidance Session** once, then expire it if refresh keeps failing."
 
 ## Flagged ambiguities
 
 - "Extract useful data" was resolved as producing a **Page Snapshot** for the first milestone.
-- "Tweak just UIs" was resolved as applying a **Live UI Patch**, not regenerating the functional page from JSON.
-- "Delegate settings to AI" was reversed for the prototype; the **AI Patch Request** now uses predefined extension safety rules.
-- "Multiple AI calls" was resolved as a copy/paste **AI Patch Workflow** for the first implementation, not direct in-extension Gemini API calls.
-- "AI safety review" was deferred; the first staged workflow uses local validation, with **Patch Repair Request** as a later recovery path.
-- "One-shot Gemini request" remains only as a legacy fallback; the primary flow is a strict linear **AI Patch Workflow**.
-- "Drastic simplification" was resolved as a **Simplified Shell** with **Original Node References** for controls and **Original Node Relocation** only for non-interactive content, not a larger CSS-only patch.
+- "Simplified UI" was resolved as **Guided Task Mode** for the pivoted direction.
+- "Keep functions working" was resolved by keeping page actions under **Guide-Only Assistance** instead of automatic execution.
+- "Preentered task" was resolved as a user-written **Task Request**, with **Task Templates** as optional later helpers.
+- "Step" was resolved as a **Guidance Step** with one primary page target.
+- "Selected DOM" was resolved as a **Page Target** that can be recovered once after page changes.
+- "Sensitive actions" were resolved as allowed guidance only when protected by a **Risk Gate**.
+- "AI call" was resolved as model-assisted creation of a **Guidance Plan** after **Local Extraction**.
+- "Model input" was resolved as a reduced **Planning Payload**, not the full raw Page Snapshot.
+- "Model output" was resolved as a strict **Plan Contract**, not free-form instructions.
+- "Active guide" was resolved as one **Guidance Session** at a time, without plan history.
+- "Preserved if user move to other page" was resolved as a same-tab **Navigating Guidance Session**, not a cross-tab guide.
+- "Continue on a new page" was resolved as **Plan Refresh**, not stale-plan reuse.
+- "What survives navigation" was resolved as minimal **Session State**, not old full Page Snapshots.
+- "How long persistence lasts" was resolved as bounded by **Session Expiry**.
+- "Unsupported navigation" was resolved as a **Paused Guidance Session** before expiry.

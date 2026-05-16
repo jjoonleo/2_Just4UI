@@ -24,6 +24,41 @@
         <button id="extractButton" type="button">Extract current page</button>
       </section>
 
+      <section class="guidePanel" aria-label="Guided task mode">
+        <div>
+          <h2>Guided Task Mode</h2>
+          <p>Use the original page and show step-by-step guidance.</p>
+        </div>
+
+        <label class="field">
+          <span>Provider</span>
+          <select id="providerSelect">
+            <option value="gemini">Gemini</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span id="apiKeyLabel">Gemini API key</span>
+          <input id="apiKeyInput" type="password" autocomplete="off" placeholder="AIza...">
+        </label>
+
+        <label class="field">
+          <span>Model</span>
+          <input id="modelInput" type="text" value="gemini-2.5-flash" autocomplete="off">
+        </label>
+
+        <label class="field">
+          <span>Task request</span>
+          <textarea id="taskRequestInput" spellcheck="true" placeholder="Example: Find the return policy, or help me buy this item with quantity 2."></textarea>
+        </label>
+
+        <div class="guideActions">
+          <button id="startGuideButton" type="button">Start guide</button>
+          <button id="clearKeyButton" type="button">Clear key</button>
+        </div>
+      </section>
+
       <section id="statusPanel" class="statusPanel" aria-live="polite" aria-busy="false">
         <div id="loadingIndicator" class="loadingIndicator" hidden>
           <span class="spinner" aria-hidden="true"></span>
@@ -56,29 +91,6 @@
       <section class="actions" aria-label="Snapshot actions">
         <button id="copyButton" type="button" disabled>Copy JSON</button>
         <button id="downloadButton" type="button" disabled>Download JSON</button>
-      </section>
-
-      <section class="patchPanel" aria-label="Live UI patch prototype">
-        <div>
-          <h2>Live UI patch</h2>
-          <p>Build staged Gemini requests from the snapshot, then apply safe selector-based patch JSON to the live tab.</p>
-        </div>
-
-        <div class="workflowActions" aria-label="Staged AI patch workflow">
-          <button id="pageAnalysisRequestButton" type="button" disabled>Build Page Analysis request</button>
-          <button id="acceptPageAnalysisButton" type="button" disabled>Accept Page Analysis</button>
-          <button id="strategyRequestButton" type="button" disabled>Build Strategy request</button>
-          <button id="acceptStrategyButton" type="button" disabled>Accept Strategy</button>
-          <button id="patchPlanRequestButton" type="button" disabled>Build Patch Plan request</button>
-        </div>
-
-        <div class="patchActions">
-          <button id="geminiRequestButton" type="button" disabled>Legacy one-shot request</button>
-          <button id="applyDemoPatchButton" type="button">Apply demo patch</button>
-          <button id="applyPatchButton" type="button">Apply JSON patch</button>
-          <button id="enforceSameTabButton" type="button">Keep actions in this tab</button>
-          <button id="resetPatchButton" type="button">Reset patch</button>
-        </div>
       </section>
 
       <textarea id="output" spellcheck="false" aria-label="Extracted snapshot JSON" placeholder="Snapshot JSON will appear here."></textarea>

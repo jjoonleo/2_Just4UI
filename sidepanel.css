@@ -51,10 +51,10 @@ textarea {
 }
 
 .controls,
+.guidePanel,
 .statusPanel,
 .summary,
-.actions,
-.patchPanel {
+.actions {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -64,6 +64,71 @@ textarea {
 .controls {
   display: grid;
   gap: 12px;
+}
+
+.guidePanel {
+  display: grid;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.guidePanel h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.guidePanel p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 10px;
+  background: #ffffff;
+  color: var(--text);
+  font: inherit;
+}
+
+.field textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.guideActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+#clearKeyButton {
+  border-color: var(--line);
+  background: #ffffff;
+  color: var(--text);
+}
+
+#clearKeyButton:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: #eef6fd;
 }
 
 .option {
@@ -162,55 +227,6 @@ button:disabled {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-}
-
-.patchPanel {
-  display: grid;
-  gap: 10px;
-}
-
-.patchPanel h2 {
-  margin: 0 0 4px;
-  font-size: 15px;
-}
-
-.patchPanel p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.patchActions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.workflowActions {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 8px;
-}
-
-.workflowActions button {
-  min-height: 36px;
-}
-
-#applyDemoPatchButton,
-#enforceSameTabButton,
-#resetPatchButton,
-#geminiRequestButton {
-  border-color: var(--line);
-  background: var(--panel);
-  color: var(--accent);
-}
-
-#applyDemoPatchButton:hover:not(:disabled),
-#enforceSameTabButton:hover:not(:disabled),
-#resetPatchButton:hover:not(:disabled),
-#geminiRequestButton:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: #eef6fc;
 }
 
 #output {

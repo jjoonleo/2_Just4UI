@@ -5,66 +5,27 @@ Chrome extension prototype for extracting a privacy-conscious **Page Snapshot** 
 ## First milestone
 
 - Extraction starts only when the user clicks the extension.
-- The extension shows a one-time JSON result in the popup.
+- The extension shows a one-time JSON result in the side panel.
 - Form values are not included.
 - Screenshot capture is optional and off by default.
-- No Gemini call is made yet.
+- Guided Task Mode can call the selected model provider only after the user starts a guide.
 
-## Live UI patch prototype
+## Guided Task Mode prototype
 
-This branch adds a behavior-preserving prototype for staged UI simplification:
+The extension can also guide a user through a task on the original page instead of regenerating the page.
 
-- **Build Page Analysis request** converts the latest **Page Snapshot** into a copy/paste prompt for Gemini to identify page type, primary tasks, critical content, low-value regions, and preserved interactive nodes.
-- **Build Strategy request** asks Gemini for a non-executable simplification direction from the accepted Page Analysis.
-- **Build Patch Plan request** asks Gemini for a compact shell-based **Patch Plan** from the accepted artifacts, not from the full snapshot again.
-- **Apply JSON patch** expects Gemini to return a **Patch Plan** JSON object with safe shell operations. The extension applies that plan to the already-loaded tab.
-- **Apply demo patch** injects a local CSS-first patch so the flow can be tested without calling Gemini.
-- **Reset patch** removes the prototype shell, style tag, badge, classes, inline styles, safe attributes, and restores any relocated non-interactive nodes.
+1. Open a normal `http://` or `https://` page.
+2. Open the extension side panel.
+3. Choose **Gemini** or **OpenAI** from **Provider**.
+4. Paste the matching API key.
+5. Enter a task such as `Find the return policy` or `Help me buy this item with quantity 2`.
+6. Click **Start guide**.
 
-The prototype intentionally does not regenerate the page and does not call Gemini directly. The behavior-preserving path is: extract a snapshot, create staged copy/paste Gemini prompts, then apply a local **Patch Plan** that creates a Simplified Shell. Interactive controls stay in their original DOM context and are exposed through shell actions; only non-interactive content may be relocated.
+The extension extracts a reduced planning payload, calls either the Gemini `generateContent` API or the OpenAI Responses API with structured JSON output, validates the returned Guidance Plan JSON, and injects a guide overlay into the original page. The overlay highlights targets and explains each step, but it does not click, type, submit, purchase, delete, or confirm for the user.
 
-Copy/paste flow:
+Guidance sessions persist within the same browser tab. If the user navigates from one supported page to another in that tab, the background service worker extracts a fresh Page Snapshot, asks the selected provider to refresh the plan using the original task and recent progress, and restores the overlay on the new page. Unsupported pages pause the session once; a second refresh failure or a stale 30-minute session expires it.
 
-1. Click **Extract current page**.
-2. Click **Build Page Analysis request**, paste it into Gemini, paste the Page Analysis JSON back, then click **Accept Page Analysis**.
-3. Click **Build Strategy request**, paste it into Gemini, paste the Strategy JSON back, then click **Accept Strategy**.
-4. Click **Build Patch Plan request**, paste it into Gemini, then paste Gemini's **Patch Plan** JSON back into the textarea.
-5. Click **Apply JSON patch**.
-
-Example Gemini response shape:
-
-```json
-{
-  "schemaVersion": "bridge-ui-patch-plan/0.1",
-  "operations": [
-    {
-      "type": "create_shell",
-      "title": "School portal",
-      "slots": [
-        { "id": "primary-actions", "title": "Start here" },
-        { "id": "main-content", "title": "Main information" },
-        { "id": "secondary-content", "title": "More" }
-      ]
-    },
-    {
-      "type": "reference_node",
-      "selector": "a.login",
-      "slot": "primary-actions",
-      "label": "Login"
-    },
-    {
-      "type": "move_node",
-      "selector": "ul.notice-list",
-      "slot": "main-content",
-      "label": "Notices"
-    }
-  ],
-  "preservationNotes": [
-    "The login link remains in its original page context and is exposed through a shell action."
-  ],
-  "riskySelectors": []
-}
-```
+Prototype limitation: the API key is stored in `chrome.storage.local` and used directly by the extension. This is acceptable only for local demo work. A backend proxy is required before a real release.
 
 ## Load in Chrome
 
@@ -72,25 +33,10 @@ Example Gemini response shape:
 2. Enable **Developer mode**.
 3. Click **Load unpacked**.
 4. Select this folder: `/Users/ejunpark/Documents/brigde_hakerthon`.
-5. Open a normal web page, click the extension, then click **Extract current page**.
-6. Use the staged request buttons to prepare Gemini input, or **Apply demo patch** to test live DOM patching immediately.
+5. Open a normal web page, click the extension to open the side panel, then click **Extract current page** or start Guided Task Mode.
 
 Chrome blocks extensions from injecting scripts into internal pages such as `chrome://extensions`, the Chrome Web Store, and some browser-owned pages. Test on regular `http://` or `https://` pages.
 
 ## Snapshot contents
 
 The JSON includes page metadata, viewport geometry, and all matching landmarks, headings, text blocks, interactive elements, form metadata, links, images, media, tables, lists, dialogs, and live regions found by the extractor. When enabled, it also includes a visible viewport screenshot as a PNG data URL.
-
-## Gemini redesign contract
-
-See `docs/gemini-ui-patch-api.md` for the suggested API contract for asking Gemini to simplify page presentation safely. The key rule is that Gemini should return shell operations, not a regenerated HTML page: use `reference_node` for interactive controls, `move_node` only for non-interactive content, and keep original buttons, links, inputs, forms, and site JavaScript behavior intact.
-
-## Regenerated page
-
-The simplified Coupang product page lives in `regenerated/`.
-
-```sh
-python3 -m http.server 8080
-```
-
-Then open `http://localhost:8080/regenerated/`. The page loads `downloaded_json/coupang galaxy phone.json` and rebuilds the product gallery, search/filtering, quantity controls, cart modal, buy modal, recommendation rows, reviews, product Q&A, and delivery/return sections from the Page Snapshot.
