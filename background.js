@@ -1,5 +1,14 @@
 const SESSION_STORAGE_KEY = "bridgeGuidanceSessions";
 const ACTIVITY_STORAGE_KEY = "bridgeGuidanceActivity";
+const PAGE_READY_TIMEOUT_MS = 8000;
+const PAGE_STABLE_MS = 900;
+const PAGE_READY_POLL_MS = 250;
+const PAGE_STATE_REFRESH_MIN_INTERVAL_MS = 3500;
+const GUIDANCE_PLAN_MODES = {
+  INITIAL: "initial",
+  REFRESH: "refresh",
+  CONTINUE_AFTER_WINDOW_ENDED: "continueAfterWindowEnded"
+};
 const PROVIDER_CONFIG = {
   gemini: {
     apiKeyStorageKey: "bridgeGeminiApiKey",
@@ -12,7 +21,7 @@ const PROVIDER_CONFIG = {
     label: "OpenAI"
   }
 };
-const SESSION_TTL_MS = 30 * 60 * 1000;
+const pageStateRefreshes = new Map();
 
 chrome.runtime.onInstalled.addListener(configureSidePanel);
 chrome.runtime.onStartup.addListener(configureSidePanel);
@@ -42,12 +51,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "BRIDGE_SET_AUTO_REFRESH") {
+    setAutoRefreshPaused(Boolean(message.paused)).then(sendResponse).catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === "BRIDGE_ANSWER_CLARIFICATION") {
+    answerPendingClarification(message).then(sendResponse).catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.type === "BRIDGE_PAGE_STATE_CHANGED" && sender.tab?.id) {
+    handlePageStateChanged(sender.tab.id, message).then(sendResponse).catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message?.type === "BRIDGE_GUIDE_PROGRESS" && sender.tab?.id) {
     updateProgress(sender.tab.id, message).catch(() => {});
   }
 
   if (message?.type === "BRIDGE_END_GUIDE" && sender.tab?.id) {
-    expireActiveSession({ removeOverlay: false, terminalStatus: "ended" }).catch(() => {});
+    endActiveSession({ removeOverlay: false, terminalStatus: "ended" }).catch(() => {});
   }
 
   return false;
@@ -66,14 +90,14 @@ chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   handleTabRemoved(tabId, removeInfo).catch(() => {});
 });
 
-async function startGuide({ tabId, provider = "gemini", taskRequest, model }) {
+async function startGuide({ tabId, provider = "gemini", taskRequest, model, clarificationHistory = [] }) {
   const modelProvider = normalizeProvider(provider);
   const providerConfig = PROVIDER_CONFIG[modelProvider];
 
   try {
     await setGuideActivity({
       phase: "extractingPage",
-      message: "Extracting page",
+      message: "Waiting for page to load",
       taskRequest
     });
 
@@ -93,19 +117,26 @@ async function startGuide({ tabId, provider = "gemini", taskRequest, model }) {
       taskRequest
     });
 
-    const plan = await createGuidancePlan({
+    const planDecision = await createGuidancePlan({
+      mode: GUIDANCE_PLAN_MODES.INITIAL,
       provider: modelProvider,
       apiKey,
       model: model || providerConfig.defaultModel,
       taskRequest,
       planningPayload,
-      previousSession: null
+      previousSession: null,
+      clarificationHistory
     });
+
+    if (planDecision.status === "needsClarification") {
+      await clearGuideActivity();
+      return { ok: true, clarification: createClarificationPayload(planDecision, clarificationHistory) };
+    }
 
     await setGuideActivity({
       phase: "updatingGuide",
       message: "Updating guide",
-      taskRequest
+      taskRequest: planDecision.clarifiedTaskRequest
     });
 
     const now = Date.now();
@@ -113,12 +144,15 @@ async function startGuide({ tabId, provider = "gemini", taskRequest, model }) {
       windowId: tab.windowId,
       hostTabId: tabId,
       provider: modelProvider,
-      taskRequest,
+      taskRequest: planDecision.clarifiedTaskRequest,
       model: model || providerConfig.defaultModel,
-      plan,
+      plan: toGuidancePlan(planDecision),
       currentStepIndex: 0,
       completedStepSummaries: [],
+      completedStepHistory: [],
+      pendingClarification: null,
       status: "active",
+      autoRefreshPaused: false,
       consecutiveRefreshFailures: 0,
       createdAt: now,
       updatedAt: now
@@ -131,7 +165,7 @@ async function startGuide({ tabId, provider = "gemini", taskRequest, model }) {
       await removeOverlayFromTab(previousSession.hostTabId);
     }
     await clearGuideActivity();
-    return { ok: true };
+    return { ok: true, clarifiedTaskRequest: planDecision.clarifiedTaskRequest };
   } catch (error) {
     await clearGuideActivity({ lastIssue: `New guide failed: ${error.message}` });
     throw error;
@@ -141,20 +175,20 @@ async function startGuide({ tabId, provider = "gemini", taskRequest, model }) {
 async function refreshAfterNavigation(tabId) {
   const session = await getActiveSession();
   if (!session || session.hostTabId !== tabId) return;
+  clearPageStateRefreshState(tabId);
   await refreshHostTab(tabId, "Guide refreshed for this page.");
 }
 
 async function moveSessionHost(tabId, windowId) {
   const session = await getActiveSession();
   if (!session || session.windowId !== windowId) return;
-  if (isExpired(session)) {
-    await expireActiveSession({ removeOverlay: true });
-    return;
-  }
   if (session.hostTabId === tabId) return;
 
   const previousHostTabId = session.hostTabId;
-  if (previousHostTabId) await removeOverlayFromTab(previousHostTabId);
+  if (previousHostTabId) {
+    clearPageStateRefreshState(previousHostTabId);
+    await removeOverlayFromTab(previousHostTabId);
+  }
 
   const moved = {
     ...session,
@@ -169,11 +203,18 @@ async function moveSessionHost(tabId, windowId) {
 }
 
 async function handleTabRemoved(tabId, removeInfo) {
+  clearPageStateRefreshState(tabId);
   const session = await getActiveSession();
   if (!session || session.hostTabId !== tabId || session.windowId !== removeInfo.windowId) return;
 
   if (removeInfo.isWindowClosing) {
-    await expireActiveSession();
+    await saveActiveSession({
+      ...session,
+      hostTabId: null,
+      status: "paused",
+      lastError: "The session window closed. Start a new guide or end this session from the dashboard.",
+      updatedAt: Date.now()
+    });
     return;
   }
 
@@ -199,13 +240,11 @@ async function handleTabRemoved(tabId, removeInfo) {
   await refreshHostTab(activeTab.id, "Guide moved after the previous tab closed.");
 }
 
-async function refreshHostTab(tabId, message = "") {
+async function refreshHostTab(tabId, message = "", options = {}) {
   const session = await getActiveSession();
   if (!session) return;
-  if (isExpired(session)) {
-    await expireActiveSession({ removeOverlay: true, terminalStatus: "ended" });
-    return;
-  }
+
+  const isPageStateRefresh = options.reason === "pageStateChange";
 
   try {
     const modelProvider = normalizeProvider(session.provider);
@@ -214,9 +253,13 @@ async function refreshHostTab(tabId, message = "") {
     const apiKey = stored[providerConfig.apiKeyStorageKey];
     if (!apiKey) throw new Error(`${providerConfig.label} API key is missing.`);
 
+    if (isPageStateRefresh) {
+      await renderOverlay(tabId, session, "Checking the updated UI...");
+    }
+
     await setGuideActivity({
       phase: "extractingPage",
-      message: "Extracting page",
+      message: isPageStateRefresh ? "Checking the updated UI" : "Waiting for page to load",
       taskRequest: session.taskRequest
     });
 
@@ -225,31 +268,49 @@ async function refreshHostTab(tabId, message = "") {
 
     await setGuideActivity({
       phase: "askingAi",
-      message: `Asking ${providerConfig.label}`,
+      message: isPageStateRefresh ? `Asking ${providerConfig.label} for updated guidance` : `Asking ${providerConfig.label}`,
       taskRequest: session.taskRequest
     });
 
-    const refreshedPlan = await createGuidancePlan({
+    const refreshedPlanDecision = await createGuidancePlan({
+      mode: options.mode || GUIDANCE_PLAN_MODES.REFRESH,
       provider: modelProvider,
       apiKey,
       model: session.model || providerConfig.defaultModel,
       taskRequest: session.taskRequest,
       planningPayload,
-      previousSession: summarizeSession(session)
+      previousSession: summarizeSession(session),
+      clarificationHistory: options.clarificationHistory || session.pendingClarification?.history || []
     });
+
+    if (refreshedPlanDecision.status === "needsClarification") {
+      await saveActiveSession({
+        ...session,
+        hostTabId: tabId,
+        pendingClarification: createClarificationPayload(refreshedPlanDecision, options.clarificationHistory || session.pendingClarification?.history || []),
+        status: "active",
+        lastError: "",
+        updatedAt: Date.now()
+      });
+      await clearGuideActivity();
+      return;
+    }
 
     await setGuideActivity({
       phase: "updatingGuide",
-      message: "Updating guide",
-      taskRequest: session.taskRequest
+      message: isPageStateRefresh ? "Updating guide for changed page" : "Updating guide",
+      taskRequest: refreshedPlanDecision.clarifiedTaskRequest
     });
 
     const refreshed = {
       ...session,
       hostTabId: tabId,
-      plan: refreshedPlan,
+      taskRequest: refreshedPlanDecision.clarifiedTaskRequest,
+      plan: filterCompletedStepsFromPlan(session, toGuidancePlan(refreshedPlanDecision)),
       currentStepIndex: 0,
       status: "active",
+      pendingClarification: null,
+      lastError: "",
       consecutiveRefreshFailures: 0,
       updatedAt: Date.now()
     };
@@ -257,8 +318,15 @@ async function refreshHostTab(tabId, message = "") {
     await renderOverlay(tabId, refreshed, message);
     await clearGuideActivity();
   } catch (error) {
-    if (session.status === "paused" || session.consecutiveRefreshFailures >= 1) {
-      await expireActiveSession({ removeOverlay: true, terminalStatus: "failed", lastIssue: error.message });
+    if (options.softFailure) {
+      await saveActiveSession({
+        ...session,
+        hostTabId: tabId,
+        status: "active",
+        lastError: error.message,
+        updatedAt: Date.now()
+      });
+      await clearGuideActivity({ lastIssue: error.message });
       return;
     }
 
@@ -275,6 +343,102 @@ async function refreshHostTab(tabId, message = "") {
   }
 }
 
+async function handlePageStateChanged(tabId, message = {}) {
+  const session = await getActiveSession();
+  if (!session || session.hostTabId !== tabId || session.status !== "active") return { ok: true, skipped: true };
+
+  if (Number.isInteger(message.currentStepIndex) || message.completedStep) {
+    await updateProgress(tabId, message);
+  }
+
+  const latest = await getActiveSession();
+  if (!latest || latest.hostTabId !== tabId || latest.autoRefreshPaused) return { ok: true, skipped: true };
+
+  queuePageStateRefresh(tabId, message.reason || "page state changed", plannerModeFromRefreshReason(message.reason));
+  return { ok: true };
+}
+
+function queuePageStateRefresh(tabId, reason = "page state changed", mode = GUIDANCE_PLAN_MODES.REFRESH) {
+  const state = getPageStateRefreshState(tabId);
+  state.reason = reason;
+  state.mode = mode;
+
+  if (state.inFlight) {
+    state.queued = true;
+    pageStateRefreshes.set(tabId, state);
+    return;
+  }
+
+  const delayMs = Math.max(0, PAGE_STATE_REFRESH_MIN_INTERVAL_MS - (Date.now() - state.lastStartedAt));
+  if (delayMs > 0) {
+    state.queued = true;
+    if (!state.timerId) {
+      state.timerId = setTimeout(() => {
+        const scheduled = getPageStateRefreshState(tabId);
+        scheduled.timerId = null;
+        scheduled.queued = false;
+        pageStateRefreshes.set(tabId, scheduled);
+        runPageStateRefresh(tabId, scheduled.reason, scheduled.mode).catch(() => {});
+      }, delayMs);
+    }
+    pageStateRefreshes.set(tabId, state);
+    return;
+  }
+
+  runPageStateRefresh(tabId, reason, mode).catch(() => {});
+}
+
+async function runPageStateRefresh(tabId, reason = "page state changed", mode = GUIDANCE_PLAN_MODES.REFRESH) {
+  const state = getPageStateRefreshState(tabId);
+  if (state.inFlight) {
+    state.queued = true;
+    state.mode = mode;
+    pageStateRefreshes.set(tabId, state);
+    return;
+  }
+
+  state.inFlight = true;
+  state.queued = false;
+  state.reason = reason;
+  state.mode = mode;
+  state.lastStartedAt = Date.now();
+  if (state.timerId) clearTimeout(state.timerId);
+  state.timerId = null;
+  pageStateRefreshes.set(tabId, state);
+
+  try {
+    const session = await getActiveSession();
+    if (!session || session.hostTabId !== tabId || session.autoRefreshPaused || session.status !== "active") return;
+    await refreshHostTab(tabId, "Guide refreshed for the changed page.", {
+      reason: "pageStateChange",
+      mode,
+      softFailure: true
+    });
+  } finally {
+    const latest = getPageStateRefreshState(tabId);
+    latest.inFlight = false;
+    const shouldRunAgain = latest.queued;
+    latest.queued = false;
+    pageStateRefreshes.set(tabId, latest);
+    if (shouldRunAgain) queuePageStateRefresh(tabId, latest.reason, latest.mode);
+  }
+}
+
+function getPageStateRefreshState(tabId) {
+  return pageStateRefreshes.get(tabId) || {
+    inFlight: false,
+    queued: false,
+    timerId: null,
+    lastStartedAt: 0,
+    reason: "",
+    mode: GUIDANCE_PLAN_MODES.REFRESH
+  };
+}
+
+function plannerModeFromRefreshReason(reason = "") {
+  return reason === "user requested next step" ? GUIDANCE_PLAN_MODES.CONTINUE_AFTER_WINDOW_ENDED : GUIDANCE_PLAN_MODES.REFRESH;
+}
+
 async function updateProgress(tabId, message) {
   const session = await getActiveSession();
   if (!session || session.hostTabId !== tabId) return;
@@ -282,19 +446,113 @@ async function updateProgress(tabId, message) {
   const nextIndex = Number.isInteger(message.currentStepIndex) ? message.currentStepIndex : session.currentStepIndex;
   const completedStep = message.completedStep;
   const completedStepSummaries = [...(session.completedStepSummaries || [])];
+  const completedStepHistory = [...(session.completedStepHistory || [])];
   if (completedStep && !completedStepSummaries.includes(completedStep)) {
     completedStepSummaries.push(completedStep);
+  }
+  const completedStepRecord = normalizeCompletedStepRecord(message.completedStepRecord, completedStep);
+  if (completedStepRecord && !hasCompletedStepRecord(completedStepHistory, completedStepRecord)) {
+    completedStepHistory.push(completedStepRecord);
   }
 
   await saveActiveSession({
     ...session,
     currentStepIndex: nextIndex,
-    completedStepSummaries: completedStepSummaries.slice(-12),
+    completedStepSummaries,
+    completedStepHistory,
     updatedAt: Date.now()
   });
 }
 
+function hasCompletedStepRecord(history, record) {
+  const recordKeys = guideListStepKeys(compactGuideListStep(record, "completed"), history.length);
+  return history.some((step, index) => {
+    const existingKeys = guideListStepKeys(compactGuideListStep(step, "completed"), index);
+    return recordKeys.some((key) => existingKeys.includes(key));
+  });
+}
+
+function normalizeCompletedStepRecord(record, fallbackTitle = "") {
+  if (record && typeof record === "object") {
+    return {
+      id: typeof record.id === "string" && record.id.trim() ? record.id.trim() : `completed-${Date.now()}`,
+      title: stringOrNull(record.title) || fallbackTitle || "Completed step",
+      instruction: stringOrNull(record.instruction) || "",
+      target: normalizeTarget(record.target && typeof record.target === "object" ? record.target : {}),
+      completionType: stringOrNull(record.completionType) || "",
+      completionMode: stringOrNull(record.completionMode) || "manual",
+      completedAt: stringOrNull(record.completedAt) || new Date().toISOString()
+    };
+  }
+
+  if (!fallbackTitle) return null;
+  return {
+    id: `completed-${Date.now()}`,
+    title: fallbackTitle,
+    instruction: "",
+    target: normalizeTarget({}),
+    completionType: "",
+    completionMode: "manual",
+    completedAt: new Date().toISOString()
+  };
+}
+
+async function setAutoRefreshPaused(paused) {
+  const session = await getActiveSession();
+  if (!session) return { ok: true };
+
+  const updated = {
+    ...session,
+    autoRefreshPaused: paused,
+    updatedAt: Date.now()
+  };
+  if (paused && updated.hostTabId) clearPageStateRefreshState(updated.hostTabId);
+  await saveActiveSession(updated);
+  if (updated.hostTabId) {
+    await renderOverlay(updated.hostTabId, updated, paused ? "Automatic refresh paused." : "Automatic refresh resumed.");
+  }
+  return { ok: true };
+}
+
+async function answerPendingClarification({ answer }) {
+  const session = await getActiveSession();
+  if (!session?.pendingClarification) throw new Error("No clarification question is active.");
+  if (!session.hostTabId) throw new Error("No active session tab is available for this clarification.");
+  const normalizedAnswer = stringOrNull(answer);
+  if (!normalizedAnswer) throw new Error("Clarification answer is missing.");
+
+  const history = [
+    ...(session.pendingClarification.history || []),
+    {
+      question: session.pendingClarification.question,
+      answer: normalizedAnswer
+    }
+  ];
+
+  await saveActiveSession({
+    ...session,
+    pendingClarification: {
+      ...session.pendingClarification,
+      history,
+      answeredAt: new Date().toISOString()
+    },
+    updatedAt: Date.now()
+  });
+  await refreshHostTab(session.hostTabId, "Guide updated from your answer.", { clarificationHistory: history });
+  return { ok: true };
+}
+
 async function extractSnapshotFromTab(tabId) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: waitForGuidePageReady,
+    args: [{
+      timeoutMs: PAGE_READY_TIMEOUT_MS,
+      stableMs: PAGE_STABLE_MS,
+      pollMs: PAGE_READY_POLL_MS
+    }]
+  });
+
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId },
     func: collectPageSnapshotForGuide
@@ -307,7 +565,7 @@ async function renderOverlay(tabId, session, message = "") {
   await chrome.scripting.executeScript({
     target: { tabId },
     func: installGuidedTaskOverlay,
-    args: [session.plan, { currentStepIndex: session.currentStepIndex || 0, message }]
+    args: [session.plan, { currentStepIndex: session.currentStepIndex || 0, message, autoRefreshPaused: Boolean(session.autoRefreshPaused) }]
   });
 }
 
@@ -331,7 +589,7 @@ async function endActiveGuideFromDashboard() {
     phase: "endingGuide",
     message: "Ending guide"
   });
-  await expireActiveSession({ removeOverlay: true, clearActivity: false, notify: false });
+  await endActiveSession({ removeOverlay: true, clearActivity: false, notify: false });
   await clearGuideActivity({ terminalStatus: "ended" });
   return { ok: true };
 }
@@ -347,8 +605,9 @@ async function saveActiveSession(session) {
   await notifyDashboardChanged();
 }
 
-async function expireActiveSession({ removeOverlay = false, clearActivity = true, terminalStatus = "ended", lastIssue = "", notify = true } = {}) {
+async function endActiveSession({ removeOverlay = false, clearActivity = true, terminalStatus = "ended", lastIssue = "", notify = true } = {}) {
   const session = await getActiveSession();
+  if (session?.hostTabId) clearPageStateRefreshState(session.hostTabId);
   if (removeOverlay && session?.hostTabId) await removeOverlayFromTab(session.hostTabId);
   await chrome.storage.local.remove(SESSION_STORAGE_KEY);
   if (clearActivity) {
@@ -356,6 +615,12 @@ async function expireActiveSession({ removeOverlay = false, clearActivity = true
   } else if (notify) {
     await notifyDashboardChanged();
   }
+}
+
+function clearPageStateRefreshState(tabId) {
+  const state = pageStateRefreshes.get(tabId);
+  if (state?.timerId) clearTimeout(state.timerId);
+  pageStateRefreshes.delete(tabId);
 }
 
 async function getGuideActivity() {
@@ -408,7 +673,11 @@ function createSessionDashboard(session, activity) {
     hasSession: Boolean(session),
     taskRequest: session?.taskRequest || activity?.taskRequest || "",
     currentStep,
+    generatedGuide: buildGeneratedGuideSummary(session),
     lastIssue,
+    pendingClarification: session?.pendingClarification || null,
+    autoRefreshPaused: Boolean(session?.autoRefreshPaused),
+    canPauseAutoRefresh: Boolean(session && session.status === "active"),
     activity: {
       isWorking,
       phase: activity?.phase || "",
@@ -429,6 +698,71 @@ function getDashboardStatus(session, activity) {
   return "noGuide";
 }
 
+function buildGeneratedGuideSummary(session) {
+  if (!session) return [];
+  const currentStepIndex = Math.max(0, session.currentStepIndex || 0);
+  const steps = Array.isArray(session.plan?.steps) ? session.plan.steps : [];
+  const items = [];
+  const seen = new Set();
+
+  for (const step of session.completedStepHistory || []) {
+    const item = compactGuideListStep(step, "completed");
+    const keys = guideListStepKeys(item, items.length);
+    if (keys.some((key) => seen.has(key))) continue;
+    keys.forEach((key) => seen.add(key));
+    items.push(item);
+  }
+
+  steps.forEach((step, index) => {
+    const state = index < currentStepIndex ? "completed" : index === currentStepIndex ? "current" : "notCompleted";
+    const item = compactGuideListStep(step, state);
+    const keys = guideListStepKeys(item, index);
+    if (keys.some((key) => seen.has(key))) {
+      return;
+    }
+    keys.forEach((key) => seen.add(key));
+    items.push(item);
+  });
+
+  return items.map((item, index) => ({ ...item, number: index + 1 }));
+}
+
+function filterCompletedStepsFromPlan(session, plan) {
+  const completedKeys = new Set();
+  (session?.completedStepHistory || []).forEach((step, index) => {
+    guideListStepKeys(compactGuideListStep(step, "completed"), index).forEach((key) => completedKeys.add(key));
+  });
+  if (!completedKeys.size) return plan;
+
+  return {
+    ...plan,
+    steps: (plan.steps || []).filter((step, index) => {
+      const keys = guideListStepKeys(compactGuideListStep(step, "notCompleted"), index);
+      return !keys.some((key) => completedKeys.has(key));
+    })
+  };
+}
+
+function compactGuideListStep(step, state) {
+  return compactObject({
+    id: step.id,
+    title: step.title || "Untitled step",
+    instruction: step.instruction || "",
+    state,
+    target: compactContinuationTarget(step.target),
+    completionType: step.completionType || step.completion?.type || ""
+  });
+}
+
+function guideListStepKeys(step, fallbackIndex) {
+  const keys = [];
+  if (step.id) keys.push(`id:${step.id}`);
+  const evidence = [step.title, step.instruction, step.target?.role, step.target?.label, step.target?.text].filter(Boolean).join("|");
+  if (evidence) keys.push(`evidence:${evidence}`);
+  if (!keys.length) keys.push(`fallback:${fallbackIndex}`);
+  return keys;
+}
+
 function getCurrentStepSummary(session) {
   if (!session?.plan?.steps?.length) return null;
   const total = session.plan.steps.length;
@@ -436,7 +770,7 @@ function getCurrentStepSummary(session) {
     return {
       index: total,
       total,
-      title: "Guide complete"
+      title: "Waiting for your decision"
     };
   }
   const currentStepIndex = Math.max(0, session.currentStepIndex || 0);
@@ -455,18 +789,73 @@ async function notifyDashboardChanged() {
   } catch {}
 }
 
-function isExpired(session) {
-  return Date.now() - Number(session.createdAt || 0) > SESSION_TTL_MS;
-}
-
 function summarizeSession(session) {
+  const currentStepIndex = session.currentStepIndex || 0;
+  const steps = session.plan?.steps || [];
+  const completedStepHistory = (session.completedStepHistory || []).map(compactCompletedStep);
+  const currentStep = steps[currentStepIndex] ? compactGuidanceStepForContinuation(steps[currentStepIndex]) : null;
+  const aheadSteps = steps.slice(currentStepIndex + 1).map(compactGuidanceStepForContinuation);
+  const visibleStepWindow = steps.map((step, index) => compactObject({
+    index,
+    state: index < currentStepIndex ? "past-window" : index === currentStepIndex ? "current" : "ahead",
+    step: compactGuidanceStepForContinuation(step)
+  }));
   return {
     taskRequest: session.taskRequest,
-    currentStepIndex: session.currentStepIndex || 0,
+    currentStepIndex,
+    lockedStepCount: (session.completedStepHistory || []).length,
+    includedCompletedStepCount: completedStepHistory.length,
     completedStepSummaries: session.completedStepSummaries || [],
+    completedStepHistory,
     previousSummary: session.plan?.summary || "",
-    previousCurrentStep: session.plan?.steps?.[session.currentStepIndex || 0] || null
+    currentStep,
+    aheadSteps,
+    planSoFar: compactObject({
+      summary: session.plan?.summary || "",
+      completedStepHistory,
+      currentStep,
+      aheadSteps,
+      visibleStepWindow
+    })
   };
+}
+
+function compactCompletedStep(step) {
+  return compactObject({
+    id: step.id,
+    title: step.title,
+    instruction: step.instruction,
+    target: compactContinuationTarget(step.target),
+    completionType: step.completionType,
+    completionMode: step.completionMode,
+    completedAt: step.completedAt
+  });
+}
+
+function compactGuidanceStepForContinuation(step) {
+  if (!step || typeof step !== "object") return null;
+  return compactObject({
+    id: step.id,
+    title: step.title,
+    instruction: step.instruction,
+    target: compactContinuationTarget(step.target),
+    completion: compactObject({
+      type: step.completion?.type
+    }),
+    risk: step.risk
+  });
+}
+
+function compactContinuationTarget(target = {}) {
+  return compactObject({
+    role: target.role,
+    label: target.label,
+    text: target.text,
+    href: target.href,
+    selector: target.selector,
+    name: target.name,
+    placeholder: target.placeholder
+  });
 }
 
 function normalizeProvider(provider) {
@@ -507,14 +896,91 @@ function createPlanningPayload(snapshot) {
   });
 }
 
-async function createGuidancePlan({ provider, apiKey, model, taskRequest, planningPayload, previousSession }) {
+async function createGuidancePlan({ mode = GUIDANCE_PLAN_MODES.INITIAL, provider, apiKey, model, taskRequest, planningPayload, previousSession, clarificationHistory = [] }) {
+  const normalizedMode = normalizeGuidancePlanMode(mode);
   if (provider === "openai") {
-    return createOpenAiGuidancePlan({ apiKey, model, taskRequest, planningPayload, previousSession });
+    return createOpenAiGuidancePlan({ mode: normalizedMode, apiKey, model, taskRequest, planningPayload, previousSession, clarificationHistory });
   }
-  return createGeminiGuidancePlan({ apiKey, model, taskRequest, planningPayload, previousSession });
+  return createGeminiGuidancePlan({ mode: normalizedMode, apiKey, model, taskRequest, planningPayload, previousSession, clarificationHistory });
 }
 
-async function createGeminiGuidancePlan({ apiKey, model, taskRequest, planningPayload, previousSession }) {
+function normalizeGuidancePlanMode(mode) {
+  return Object.values(GUIDANCE_PLAN_MODES).includes(mode) ? mode : GUIDANCE_PLAN_MODES.REFRESH;
+}
+
+function guidancePlannerPromptLines(mode) {
+  return [
+    ...guidancePlannerBasePromptLines(),
+    ...guidancePlannerModePromptLines(mode)
+  ];
+}
+
+function guidancePlannerBasePromptLines() {
+  return [
+    "Create a guide-only browser assistance plan.",
+    "Return only JSON that follows the provided schema.",
+    "Return status=ready with a progressive plan window when the next useful target/action is clear.",
+    "Return status=needsClarification, one direct question, and no steps only when ambiguity changes which page target or action should be guided next.",
+    "Do not ask clarification for missing values that the user can type into an identifiable input field; highlight the field instead.",
+    "Do not ask clarification for equivalent duplicate targets; choose the visible primary target.",
+    "Use a progressive plan window for status=ready: return only the current actionable step plus at most one optional future preview step.",
+    "Do not generate the full workflow upfront.",
+    "Do not rewrite completed steps from previousSession. Only add or revise not-yet-reached guidance.",
+    "Use previousSession.planSoFar, previousSession.completedStepHistory, previousSession.currentStep, and previousSession.aheadSteps to understand what has already been guided.",
+    "Do not duplicate any completed step, current step, or ahead step unless the current page evidence proves the user must repeat it.",
+    "Keep the plan compact: one short summary, at most 3 assumptions, and at most 2 steps.",
+    "Never ask the extension to click, type, submit, purchase, delete, or confirm for the user.",
+    "Each step must point to one primary target from the current planning payload.",
+    "Do not add fields or instructions that mark the user's task as complete. The user decides whether to ask for another step or end the guide.",
+    "Use risk=high for checkout, payment, personal information submission, account deletion, or destructive actions.",
+    "Treat clarificationHistory answers as authoritative.",
+    "Use empty strings for unknown optional target or completion fields."
+  ];
+}
+
+function guidancePlannerModePromptLines(mode) {
+  if (mode === GUIDANCE_PLAN_MODES.INITIAL) {
+    return [
+      "Planner mode: initial.",
+      "Create the first current step for this task from the current page evidence.",
+      "Optionally include one future preview step only if it is clearly useful from the current page evidence.",
+      "There is no completed history for this first guide unless clarificationHistory says otherwise."
+    ];
+  }
+
+  if (mode === GUIDANCE_PLAN_MODES.CONTINUE_AFTER_WINDOW_ENDED) {
+    return [
+      "Planner mode: continueAfterWindowEnded.",
+      "The visible generated window is exhausted because the user requested another step.",
+      "Return only additions after completed history.",
+      "Do not reinterpret, reorder, rewrite, or repeat completed steps.",
+      "Do not return any completed, current, or already-previewed step from previousSession.",
+      "When adding a next step, choose the first useful step after the completed history and the existing plan window.",
+      "If no new useful step can be identified, ask one clarification question instead of repeating prior steps."
+    ];
+  }
+
+  return [
+    "Planner mode: refresh.",
+    "Use current page evidence to repair stale future/current guidance.",
+    "Do not treat refresh as a request to restart the guide.",
+    "Preserve session progress and continue from the active tab's current page evidence.",
+    "Revise only stale not-yet-completed guidance for the current page."
+  ];
+}
+
+function guidancePlannerInput({ mode, taskRequest, previousSession, clarificationHistory, planningPayload }) {
+  return {
+    mode,
+    taskRequest,
+    previousSession,
+    clarificationHistory: compactClarificationHistory(clarificationHistory),
+    planningPayload
+  };
+}
+
+async function createGeminiGuidancePlan({ mode, apiKey, model, taskRequest, planningPayload, previousSession, clarificationHistory }) {
+  const promptLines = guidancePlannerPromptLines(mode);
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
     headers: {
@@ -526,42 +992,33 @@ async function createGeminiGuidancePlan({ apiKey, model, taskRequest, planningPa
         role: "user",
         parts: [{
           text: [
-            "Create or refresh a guide-only browser assistance plan.",
-            "Return only JSON that follows the provided schema.",
-            "Never ask the extension to click, type, submit, purchase, delete, or confirm for the user.",
-            "Each step must point to one primary target from the current planning payload.",
-            "Use risk=high for checkout, payment, personal information submission, account deletion, or destructive actions.",
-            "If previousSession is present, continue the user's task from the active tab's new page evidence.",
-            "Use empty strings for unknown optional target or completion fields.",
+            ...promptLines,
             "",
-            JSON.stringify({ taskRequest, previousSession, planningPayload })
+            JSON.stringify(guidancePlannerInput({ mode, taskRequest, previousSession, clarificationHistory, planningPayload }))
           ].join("\n")
         }]
       }],
       generationConfig: {
-        maxOutputTokens: 2400,
+        maxOutputTokens: 8192,
         responseMimeType: "application/json",
-        responseSchema: guidancePlanSchema()
+        responseJsonSchema: guidancePlanSchema()
       }
     })
   });
 
   const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(data?.error?.message || `Gemini request failed with HTTP ${response.status}.`);
+  if (!response.ok) throw new Error(formatGeminiError(data, response.status));
 
   const rawText = extractResponseText(data);
   if (!rawText) throw new Error("Model returned no guidance plan text.");
+  throwIfGeminiResponseWasTruncated(data, rawText);
 
-  let plan;
-  try {
-    plan = JSON.parse(rawText);
-  } catch {
-    throw new Error("Model returned invalid JSON.");
-  }
-  return validateGuidancePlan(plan);
+  const plan = parseModelJson(rawText, "Gemini");
+  return validateGuidancePlan(plan, taskRequest);
 }
 
-async function createOpenAiGuidancePlan({ apiKey, model, taskRequest, planningPayload, previousSession }) {
+async function createOpenAiGuidancePlan({ mode, apiKey, model, taskRequest, planningPayload, previousSession, clarificationHistory }) {
+  const promptLines = guidancePlannerPromptLines(mode);
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -570,16 +1027,8 @@ async function createOpenAiGuidancePlan({ apiKey, model, taskRequest, planningPa
     },
     body: JSON.stringify({
       model,
-      instructions: [
-        "Create or refresh a guide-only browser assistance plan.",
-        "Return only JSON that follows the provided schema.",
-        "Never ask the extension to click, type, submit, purchase, delete, or confirm for the user.",
-        "Each step must point to one primary target from the current planning payload.",
-        "Use risk=high for checkout, payment, personal information submission, account deletion, or destructive actions.",
-        "If previousSession is present, continue the user's task from the active tab's new page evidence.",
-        "Use empty strings for unknown optional target or completion fields."
-      ].join(" "),
-      input: JSON.stringify({ taskRequest, previousSession, planningPayload }),
+      instructions: promptLines.join(" "),
+      input: JSON.stringify(guidancePlannerInput({ mode, taskRequest, previousSession, clarificationHistory, planningPayload })),
       text: {
         format: {
           type: "json_schema",
@@ -588,7 +1037,7 @@ async function createOpenAiGuidancePlan({ apiKey, model, taskRequest, planningPa
           schema: openAiGuidancePlanSchema()
         }
       },
-      max_output_tokens: 2400
+      max_output_tokens: 8192
     })
   });
 
@@ -598,13 +1047,90 @@ async function createOpenAiGuidancePlan({ apiKey, model, taskRequest, planningPa
   const rawText = extractOpenAiResponseText(data);
   if (!rawText) throw new Error("Model returned no guidance plan text.");
 
-  let plan;
-  try {
-    plan = JSON.parse(rawText);
-  } catch {
-    throw new Error("Model returned invalid JSON.");
+  const plan = parseModelJson(rawText, "OpenAI");
+  return validateGuidancePlan(plan, taskRequest);
+}
+
+function throwIfGeminiResponseWasTruncated(data, rawText) {
+  const truncated = (data?.candidates || []).some((candidate) => candidate.finishReason === "MAX_TOKENS");
+  if (!truncated) return;
+
+  throw new Error(`Gemini returned truncated JSON before the plan was complete. Try again, switch to a model with a larger output limit, or use a shorter page/task. Raw response preview: ${previewText(rawText)}`);
+}
+
+function formatGeminiError(data, status) {
+  const message = data?.error?.message || `Gemini request failed with HTTP ${status}.`;
+  if (/Requests to this API generativelanguage\.googleapis\.com[\s\S]*are blocked/i.test(message)) {
+    return [
+      "Gemini API key is blocked from calling the Generative Language API.",
+      "Use a Gemini API key from Google AI Studio, or update this key's Google Cloud API restrictions to allow Generative Language API (generativelanguage.googleapis.com).",
+      `Original error: ${message}`
+    ].join(" ");
   }
-  return validateGuidancePlan(plan);
+  return message;
+}
+
+function parseModelJson(rawText, providerLabel = "Model") {
+  const candidates = [
+    rawText,
+    stripMarkdownJsonFence(rawText),
+    extractFirstJsonValue(rawText)
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Try the next normalized model output shape.
+    }
+  }
+
+  throw new Error(`${providerLabel} returned invalid JSON. Raw response preview: ${previewText(rawText)}`);
+}
+
+function previewText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 1200) || "(empty)";
+}
+
+function stripMarkdownJsonFence(rawText) {
+  const trimmed = rawText.trim();
+  const match = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return match?.[1]?.trim() || null;
+}
+
+function extractFirstJsonValue(rawText) {
+  const startIndex = rawText.search(/[\[{]/);
+  if (startIndex < 0) return null;
+
+  const stack = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let index = startIndex; index < rawText.length; index += 1) {
+    const character = rawText[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (character === "\"") {
+      inString = true;
+    } else if (character === "{" || character === "[") {
+      stack.push(character === "{" ? "}" : "]");
+    } else if (character === "}" || character === "]") {
+      if (stack.pop() !== character) return null;
+      if (stack.length === 0) return rawText.slice(startIndex, index + 1).trim();
+    }
+  }
+
+  return null;
 }
 
 function extractResponseText(response) {
@@ -628,14 +1154,60 @@ function extractOpenAiResponseText(response) {
   return chunks.join("").trim();
 }
 
-function validateGuidancePlan(plan) {
+function compactClarificationHistory(history) {
+  return (Array.isArray(history) ? history : []).slice(-6).map((item) => compactObject({
+    question: stringOrNull(item?.question),
+    answer: stringOrNull(item?.answer)
+  }));
+}
+
+function createClarificationPayload(planDecision, history = []) {
+  return {
+    question: planDecision.question,
+    clarifiedTaskRequest: planDecision.clarifiedTaskRequest,
+    assumptions: planDecision.assumptions || [],
+    history: compactClarificationHistory(history)
+  };
+}
+
+function toGuidancePlan(planDecision) {
+  return {
+    summary: planDecision.summary,
+    assumptions: planDecision.assumptions || [],
+    steps: planDecision.steps || []
+  };
+}
+
+function validateGuidancePlan(plan, fallbackTaskRequest = "") {
   if (!plan || typeof plan !== "object") throw new Error("Guidance plan must be an object.");
+  const status = plan.status === "needsClarification" ? "needsClarification" : "ready";
+  const question = stringOrNull(plan.question) || "";
+  const clarifiedTaskRequest = stringOrNull(plan.clarifiedTaskRequest) || fallbackTaskRequest;
+  const assumptions = Array.isArray(plan.assumptions) ? plan.assumptions.filter((item) => typeof item === "string" && item.trim()).slice(0, 3) : [];
+  if (!clarifiedTaskRequest) throw new Error("Clarified task request is missing.");
+
+  if (status === "needsClarification") {
+    if (!question) throw new Error("Task clarification question is missing.");
+    if (Array.isArray(plan.steps) && plan.steps.length) throw new Error("Task clarification response must not include guidance steps.");
+    return {
+      status,
+      question,
+      clarifiedTaskRequest,
+      assumptions,
+      steps: []
+    };
+  }
+
   if (typeof plan.summary !== "string" || !plan.summary.trim()) throw new Error("Guidance plan summary is missing.");
   if (!Array.isArray(plan.steps) || !plan.steps.length) throw new Error("Guidance plan must include at least one step.");
+  if (plan.steps.length > 2) throw new Error("Guidance plan must include only the current step and at most one preview step.");
 
   return {
+    status,
+    question: "",
+    clarifiedTaskRequest,
     summary: plan.summary.trim(),
-    assumptions: Array.isArray(plan.assumptions) ? plan.assumptions.filter((item) => typeof item === "string" && item.trim()).slice(0, 5) : [],
+    assumptions,
     steps: plan.steps.map((step, index) => {
       if (!step || typeof step !== "object") throw new Error(`Step ${index + 1} is invalid.`);
       if (typeof step.title !== "string" || !step.title.trim()) throw new Error(`Step ${index + 1} is missing a title.`);
@@ -698,15 +1270,35 @@ function compactObject(object) {
 
 function guidancePlanSchema() {
   const optionalString = { type: "string" };
+  const targetSchema = {
+    type: "object",
+    required: ["snapshotId", "kind", "role", "label", "text", "selector", "href", "name", "type", "placeholder"],
+    properties: {
+      snapshotId: optionalString,
+      kind: optionalString,
+      role: optionalString,
+      label: optionalString,
+      text: optionalString,
+      selector: optionalString,
+      href: optionalString,
+      name: optionalString,
+      type: optionalString,
+      placeholder: optionalString
+    }
+  };
   return {
     type: "object",
-    required: ["summary", "assumptions", "steps"],
+    required: ["status", "question", "clarifiedTaskRequest", "summary", "assumptions", "steps"],
     properties: {
+      status: { type: "string", enum: ["needsClarification", "ready"] },
+      question: { type: "string" },
+      clarifiedTaskRequest: { type: "string" },
       summary: { type: "string" },
-      assumptions: { type: "array", items: { type: "string" } },
+      assumptions: { type: "array", maxItems: 3, items: { type: "string" } },
       steps: {
         type: "array",
-        minItems: 1,
+        minItems: 0,
+        maxItems: 2,
         items: {
           type: "object",
           required: ["id", "title", "instruction", "target", "completion", "risk"],
@@ -715,22 +1307,7 @@ function guidancePlanSchema() {
             title: { type: "string" },
             instruction: { type: "string" },
             risk: { type: "string", enum: ["low", "medium", "high"] },
-            target: {
-              type: "object",
-              required: ["snapshotId", "kind", "role", "label", "text", "selector", "href", "name", "type", "placeholder"],
-              properties: {
-                snapshotId: optionalString,
-                kind: optionalString,
-                role: optionalString,
-                label: optionalString,
-                text: optionalString,
-                selector: optionalString,
-                href: optionalString,
-                name: optionalString,
-                type: optionalString,
-                placeholder: optionalString
-              }
-            },
+            target: targetSchema,
             completion: {
               type: "object",
               required: ["type", "value"],
@@ -748,16 +1325,37 @@ function guidancePlanSchema() {
 
 function openAiGuidancePlanSchema() {
   const stringField = { type: "string" };
+  const targetSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["snapshotId", "kind", "role", "label", "text", "selector", "href", "name", "type", "placeholder"],
+    properties: {
+      snapshotId: stringField,
+      kind: stringField,
+      role: stringField,
+      label: stringField,
+      text: stringField,
+      selector: stringField,
+      href: stringField,
+      name: stringField,
+      type: stringField,
+      placeholder: stringField
+    }
+  };
   return {
     type: "object",
     additionalProperties: false,
-    required: ["summary", "assumptions", "steps"],
+    required: ["status", "question", "clarifiedTaskRequest", "summary", "assumptions", "steps"],
     properties: {
+      status: { type: "string", enum: ["needsClarification", "ready"] },
+      question: stringField,
+      clarifiedTaskRequest: stringField,
       summary: stringField,
-      assumptions: { type: "array", items: stringField },
+      assumptions: { type: "array", maxItems: 3, items: stringField },
       steps: {
         type: "array",
-        minItems: 1,
+        minItems: 0,
+        maxItems: 2,
         items: {
           type: "object",
           additionalProperties: false,
@@ -767,23 +1365,7 @@ function openAiGuidancePlanSchema() {
             title: stringField,
             instruction: stringField,
             risk: { type: "string", enum: ["low", "medium", "high"] },
-            target: {
-              type: "object",
-              additionalProperties: false,
-              required: ["snapshotId", "kind", "role", "label", "text", "selector", "href", "name", "type", "placeholder"],
-              properties: {
-                snapshotId: stringField,
-                kind: stringField,
-                role: stringField,
-                label: stringField,
-                text: stringField,
-                selector: stringField,
-                href: stringField,
-                name: stringField,
-                type: stringField,
-                placeholder: stringField
-              }
-            },
+            target: targetSchema,
             completion: {
               type: "object",
               additionalProperties: false,
@@ -798,6 +1380,56 @@ function openAiGuidancePlanSchema() {
       }
     }
   };
+}
+
+async function waitForGuidePageReady({ timeoutMs = 8000, stableMs = 900, pollMs = 250 } = {}) {
+  const startedAt = Date.now();
+  let lastSignature = "";
+  let stableSince = 0;
+  const getSignature = () => {
+    const body = document.body;
+    const text = (body?.innerText || body?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 1000);
+    const interactiveCount = body ? document.querySelectorAll("a[href],button,input,select,textarea,summary,[role],[tabindex]:not([tabindex='-1']),[contenteditable='true']").length : 0;
+    const headingCount = body ? document.querySelectorAll("h1,h2,h3,h4,h5,h6,[role='heading']").length : 0;
+    const busyCount = body ? document.querySelectorAll("[aria-busy='true'],[role='progressbar'],[role='status']").length : 0;
+
+    return {
+      readyState: document.readyState,
+      isReadyStateSettled: document.readyState === "interactive" || document.readyState === "complete",
+      hasBody: Boolean(body),
+      textLength: text.length,
+      interactiveCount,
+      headingCount,
+      busyCount,
+      value: [
+        document.readyState,
+        location.href,
+        document.title,
+        text.length,
+        interactiveCount,
+        headingCount,
+        busyCount,
+        text.slice(0, 240)
+      ].join("|")
+    };
+  };
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const signature = getSignature();
+    const hasUsefulContent = signature.isReadyStateSettled && signature.hasBody && (signature.textLength >= 80 || signature.interactiveCount > 0 || signature.headingCount > 0);
+
+    if (hasUsefulContent && signature.value === lastSignature) {
+      if (!stableSince) stableSince = Date.now();
+      if (Date.now() - stableSince >= stableMs) return signature;
+    } else {
+      lastSignature = signature.value;
+      stableSince = 0;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+
+  return getSignature();
 }
 
 function collectPageSnapshotForGuide() {
@@ -826,7 +1458,7 @@ function collectPageSnapshotForGuide() {
       documentHeight: document.documentElement.scrollHeight
     },
     content: {
-      landmarks: Array.from(document.querySelectorAll("header,nav,main,aside,footer,section,article,form,[role='banner'],[role='navigation'],[role='main'],[role='complementary'],[role='contentinfo'],[role='search'],[role='region']")).filter(isVisible).slice(0, 120).map((element) => ({
+      landmarks: Array.from(document.querySelectorAll("header,nav,main,aside,footer,section,article,form,[role='banner'],[role='navigation'],[role='main'],[role='complementary'],[role='contentinfo'],[role='search'],[role='region']")).filter((element) => isVisible(element) && !isBridgeElement(element)).slice(0, 120).map((element) => ({
         tag: element.tagName.toLowerCase(),
         role: getRole(element),
         label: getAccessibleName(element),
@@ -834,13 +1466,13 @@ function collectPageSnapshotForGuide() {
         selector: getCssPath(element),
         bounds: getBounds(element)
       })),
-      headings: Array.from(document.querySelectorAll("h1,h2,h3,h4,h5,h6,[role='heading']")).filter(isVisible).slice(0, 120).map((element) => ({
+      headings: Array.from(document.querySelectorAll("h1,h2,h3,h4,h5,h6,[role='heading']")).filter((element) => isVisible(element) && !isBridgeElement(element)).slice(0, 120).map((element) => ({
         level: getHeadingLevel(element),
         text: truncate(getElementText(element), MAX_TEXT_LENGTH),
         selector: getCssPath(element),
         bounds: getBounds(element)
       })),
-      textBlocks: Array.from(document.querySelectorAll(textBlockSelector)).filter(isVisible).map((element) => ({
+      textBlocks: Array.from(document.querySelectorAll(textBlockSelector)).filter((element) => isVisible(element) && !isBridgeElement(element)).map((element) => ({
         tag: element.tagName.toLowerCase(),
         role: getRole(element),
         text: truncate(getElementText(element) || getAccessibleName(element), MAX_TEXT_LENGTH),
@@ -848,7 +1480,7 @@ function collectPageSnapshotForGuide() {
         bounds: getBounds(element),
         importance: inferImportance(element)
       })).filter((item) => item.text).slice(0, 300),
-      interactiveElements: Array.from(document.querySelectorAll(interactiveSelector)).filter(isVisible).map((element, index) => ({
+      interactiveElements: Array.from(document.querySelectorAll(interactiveSelector)).filter((element) => isVisible(element) && !isBridgeElement(element)).map((element, index) => ({
         snapshotId: `interactive-${index + 1}`,
         tag: element.tagName.toLowerCase(),
         role: getRole(element),
@@ -867,14 +1499,14 @@ function collectPageSnapshotForGuide() {
         selector: getCssPath(element),
         bounds: getBounds(element)
       })).slice(0, 250),
-      forms: Array.from(document.forms).slice(0, 20).map((form, index) => ({
+      forms: Array.from(document.forms).filter((form) => !isBridgeElement(form)).slice(0, 20).map((form, index) => ({
         snapshotId: `form-${index + 1}`,
         label: getAccessibleName(form),
         selector: getCssPath(form),
         method: (form.getAttribute("method") || "get").toLowerCase(),
         actionOrigin: safeOrigin(form.action),
         bounds: getBounds(form),
-        fields: Array.from(form.querySelectorAll("input, select, textarea, button")).map((field, fieldIndex) => ({
+        fields: Array.from(form.querySelectorAll("input, select, textarea, button")).filter((field) => !isBridgeElement(field)).map((field, fieldIndex) => ({
           snapshotId: `form-${index + 1}-field-${fieldIndex + 1}`,
           tag: field.tagName.toLowerCase(),
           type: field.getAttribute("type") || (field.tagName.toLowerCase() === "input" ? "text" : null),
@@ -889,7 +1521,7 @@ function collectPageSnapshotForGuide() {
           bounds: getBounds(field)
         }))
       })),
-      links: Array.from(document.links).filter(isVisible).map((link) => ({
+      links: Array.from(document.links).filter((link) => isVisible(link) && !isBridgeElement(link)).map((link) => ({
         text: truncate(getElementText(link) || getAccessibleName(link), MAX_TEXT_LENGTH),
         href: link.href,
         sameOrigin: safeOrigin(link.href) === location.origin,
@@ -946,6 +1578,10 @@ function collectPageSnapshotForGuide() {
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
     return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0;
+  }
+
+  function isBridgeElement(element) {
+    return Boolean(element?.closest?.("#bridge-guided-task-root,#bridge-guided-task-highlight,#bridge-guided-task-style"));
   }
 
   function getBounds(element) {
@@ -1016,9 +1652,16 @@ function installGuidedTaskOverlay(plan, options = {}) {
   const HIGHLIGHT_ID = "bridge-guided-task-highlight";
   const STYLE_ID = "bridge-guided-task-style";
   const ACTIVE_CLASS = "bridge-guided-task-active-target";
+  const TARGET_MISSING_DEBOUNCE_MS = 500;
+  const RENDER_COOLDOWN_MS = 1000;
   let currentIndex = Math.max(0, Math.min(options.currentStepIndex || 0, plan.steps.length));
   let currentTarget = null;
   let riskAccepted = false;
+  let pageStateTimer = null;
+  let mutationObserver = null;
+  let pendingCompletedProgress = null;
+  let pendingCompletedProgressTimer = null;
+  let ignorePageStateChangesUntil = Date.now() + RENDER_COOLDOWN_MS;
 
   cleanupExistingGuide();
   installStyles();
@@ -1039,12 +1682,14 @@ function installGuidedTaskOverlay(plan, options = {}) {
   document.addEventListener("click", onPageClick, true);
   document.addEventListener("input", onInput, true);
   document.addEventListener("change", onInput, true);
+  installPageStateObserver();
   renderStep(options.message || "");
 
-  function renderStep(message = "") {
+  function renderStep(message = "", renderOptions = {}) {
     const step = plan.steps[currentIndex];
     if (!step) return renderFinished();
     clearTarget();
+    ignorePageStateChangesUntil = Date.now() + RENDER_COOLDOWN_MS;
     riskAccepted = step.risk !== "high";
     currentTarget = resolveTarget(step.target);
     if (currentTarget) {
@@ -1055,6 +1700,9 @@ function installGuidedTaskOverlay(plan, options = {}) {
     bindButtons();
     setTimeout(positionOverlay, 250);
     notifyProgress();
+    if (!currentTarget && renderOptions.refreshIfTargetMissing) {
+      requestModelRefresh("next step target missing");
+    }
   }
 
   function panelHtml(step, message) {
@@ -1068,9 +1716,9 @@ function installGuidedTaskOverlay(plan, options = {}) {
         <p class="bridge-guide-instruction">${escapeHtml(step.instruction)}</p>
         ${currentTarget ? "" : `<p class="bridge-guide-warning">Target not found. Continue manually or wait for the refreshed page guide.</p>`}
         ${message ? `<p class="bridge-guide-message">${escapeHtml(message)}</p>` : ""}
+        ${previewHtml()}
         <div class="bridge-guide-progress">Step ${currentIndex + 1} of ${plan.steps.length}</div>
         <div class="bridge-guide-actions">
-          <button type="button" data-bridge-action="back" ${currentIndex === 0 ? "disabled" : ""}>Back</button>
           ${isHighRisk ? `<button type="button" data-bridge-action="accept-risk">Continue</button>` : `<button type="button" data-bridge-action="next">Next</button>`}
           <button type="button" data-bridge-action="end">End</button>
         </div>
@@ -1078,12 +1726,18 @@ function installGuidedTaskOverlay(plan, options = {}) {
     `;
   }
 
+  function previewHtml() {
+    const preview = plan.steps[currentIndex + 1];
+    if (!preview) return "";
+    return `<div class="bridge-guide-preview"><span>Next</span><strong>${escapeHtml(preview.title)}</strong></div>`;
+  }
+
   function bindButtons() {
     root.querySelectorAll("[data-bridge-action]").forEach((button) => {
       button.addEventListener("click", () => {
         const action = button.dataset.bridgeAction;
-        if (action === "back") goTo(currentIndex - 1);
-        if (action === "next") goTo(currentIndex + 1, plan.steps[currentIndex]?.title);
+        if (action === "next") goTo(currentIndex + 1, plan.steps[currentIndex]?.title, { refreshIfTargetMissing: true, completionMode: "manual" });
+        if (action === "continue") requestModelRefresh("user requested next step");
         if (action === "accept-risk") {
           riskAccepted = true;
           root.innerHTML = panelHtml(plan.steps[currentIndex], "Risk gate acknowledged. Complete the action on the original page when ready.");
@@ -1095,10 +1749,13 @@ function installGuidedTaskOverlay(plan, options = {}) {
     });
   }
 
-  function goTo(index, completedStep = "") {
+  function goTo(index, completedStep = "", goToOptions = {}) {
+    const previousStep = completedStep ? plan.steps[currentIndex] : null;
+    const completedStepRecord = previousStep ? createCompletedStepRecord(previousStep, goToOptions.completionMode || "auto") : null;
     currentIndex = Math.max(0, Math.min(index, plan.steps.length));
-    notifyProgress(completedStep);
-    renderStep();
+    notifyProgress(completedStep, completedStepRecord);
+    if (completedStepRecord) rememberCompletedProgressForRefresh(completedStep, completedStepRecord);
+    renderStep("", goToOptions);
   }
 
   function onPageClick(event) {
@@ -1113,16 +1770,101 @@ function installGuidedTaskOverlay(plan, options = {}) {
     const step = plan.steps[currentIndex];
     if (!step || (step.risk === "high" && !riskAccepted)) return;
     const completion = step.completion || { type: "manual" };
-    if (completion.type === "click" && eventType === "click") goTo(currentIndex + 1, step.title);
-    if (completion.type === "inputChanged" && eventType === "inputChanged") goTo(currentIndex + 1, step.title);
-    if (completion.type === "inputValueEquals" && eventTarget && String(eventTarget.value || "").trim() === String(completion.value || "").trim()) goTo(currentIndex + 1, step.title);
-    if (completion.type === "checked" && eventTarget?.checked) goTo(currentIndex + 1, step.title);
+    if (completion.type === "click" && eventType === "click") goTo(currentIndex + 1, step.title, { completionMode: "auto-click" });
+    if (completion.type === "inputChanged" && eventType === "inputChanged" && !isTextEntryElement(eventTarget)) goTo(currentIndex + 1, step.title, { completionMode: "auto-inputChanged" });
+    if (completion.type === "inputValueEquals" && eventTarget && String(eventTarget.value || "").trim() === String(completion.value || "").trim()) goTo(currentIndex + 1, step.title, { completionMode: "auto-inputValueEquals" });
+    if (completion.type === "checked" && eventTarget?.checked) goTo(currentIndex + 1, step.title, { completionMode: "auto-checked" });
   }
 
-  function notifyProgress(completedStep = "") {
+  function isTextEntryElement(element) {
+    if (!(element instanceof Element)) return false;
+    if (element.matches("textarea,[contenteditable='true']")) return true;
+    if (!element.matches("input")) return false;
+    const type = normalize(element.getAttribute("type") || "text");
+    return !["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"].includes(type);
+  }
+
+  function createCompletedStepRecord(step, completionMode = "manual") {
+    return {
+      id: step.id,
+      title: step.title,
+      instruction: step.instruction,
+      target: {
+        role: step.target?.role || "",
+        label: step.target?.label || "",
+        text: step.target?.text || "",
+        href: step.target?.href || "",
+        selector: step.target?.selector || "",
+        name: step.target?.name || "",
+        placeholder: step.target?.placeholder || ""
+      },
+      completionType: step.completion?.type || "",
+      completionMode,
+      completedAt: new Date().toISOString()
+    };
+  }
+
+  function notifyProgress(completedStep = "", completedStepRecord = null) {
     try {
-      chrome.runtime.sendMessage({ type: "BRIDGE_GUIDE_PROGRESS", currentStepIndex: currentIndex, completedStep });
+      chrome.runtime.sendMessage({ type: "BRIDGE_GUIDE_PROGRESS", currentStepIndex: currentIndex, completedStep, completedStepRecord });
     } catch {}
+  }
+
+  function rememberCompletedProgressForRefresh(completedStep, completedStepRecord) {
+    pendingCompletedProgress = {
+      completedStep,
+      completedStepRecord,
+      currentStepIndex: currentIndex
+    };
+    clearTimeout(pendingCompletedProgressTimer);
+    pendingCompletedProgressTimer = setTimeout(() => {
+      pendingCompletedProgress = null;
+      pendingCompletedProgressTimer = null;
+    }, 5000);
+  }
+
+  function installPageStateObserver() {
+    if (options.autoRefreshPaused || mutationObserver || !document.body) return;
+    mutationObserver = new MutationObserver(() => {
+      if (Date.now() < ignorePageStateChangesUntil) return;
+      if (isCurrentTargetMissing()) requestModelRefresh("current target disappeared", isCurrentTargetMissing);
+    });
+    mutationObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["aria-expanded", "aria-hidden", "aria-modal", "class", "hidden", "open", "role", "style"]
+    });
+  }
+
+  function requestModelRefresh(reason, shouldRefresh = () => true) {
+    if (options.autoRefreshPaused) return;
+    clearTimeout(pageStateTimer);
+    pageStateTimer = setTimeout(() => {
+      pageStateTimer = null;
+      if (!shouldRefresh()) return;
+      const completedProgress = pendingCompletedProgress;
+      pendingCompletedProgress = null;
+      clearTimeout(pendingCompletedProgressTimer);
+      pendingCompletedProgressTimer = null;
+      try {
+        chrome.runtime.sendMessage({
+          type: "BRIDGE_PAGE_STATE_CHANGED",
+          reason,
+          completedStep: completedProgress?.completedStep || "",
+          completedStepRecord: completedProgress?.completedStepRecord || null,
+          currentStepIndex: currentIndex
+        });
+      } catch {}
+    }, TARGET_MISSING_DEBOUNCE_MS);
+  }
+
+  function isCurrentTargetMissing() {
+    return Boolean(currentTarget && (!document.documentElement.contains(currentTarget) || !isVisible(currentTarget)));
+  }
+
+  function isBridgeElement(element) {
+    return Boolean(element?.closest?.(`#${ROOT_ID},#${HIGHLIGHT_ID},#${STYLE_ID}`));
   }
 
   function resolveTarget(target) {
@@ -1189,7 +1931,9 @@ function installGuidedTaskOverlay(plan, options = {}) {
   function renderFinished() {
     clearTarget();
     highlight.style.display = "none";
-    root.innerHTML = `<section class="bridge-guide-panel"><div class="bridge-guide-kicker">Guided Task Mode</div><h2>Guide complete</h2><p class="bridge-guide-instruction">The guidance plan is finished.</p><div class="bridge-guide-actions"><button type="button" data-bridge-action="end">Close</button></div></section>`;
+    currentIndex = plan.steps.length;
+    notifyProgress();
+    root.innerHTML = `<section class="bridge-guide-panel"><div class="bridge-guide-kicker">Guided Task Mode</div><h2>Need another step?</h2><p class="bridge-guide-instruction">The current generated guidance window is finished. You decide whether to ask for the next step or end the guide.</p><div class="bridge-guide-actions"><button type="button" data-bridge-action="continue">Next step</button><button type="button" data-bridge-action="end">End</button></div></section>`;
     bindButtons();
     positionOverlay();
   }
@@ -1201,6 +1945,10 @@ function installGuidedTaskOverlay(plan, options = {}) {
 
   function endGuide(notify = false) {
     clearTarget();
+    clearTimeout(pageStateTimer);
+    clearTimeout(pendingCompletedProgressTimer);
+    mutationObserver?.disconnect();
+    mutationObserver = null;
     window.removeEventListener("resize", positionOverlay);
     window.removeEventListener("scroll", positionOverlay, true);
     document.removeEventListener("click", onPageClick, true);
@@ -1238,7 +1986,10 @@ function installGuidedTaskOverlay(plan, options = {}) {
       .bridge-guide-summary,.bridge-guide-progress{color:#5d6978;font-size:12px}
       .bridge-guide-warning{color:#b3261e;font-weight:700}.bridge-guide-message{color:#0f4f82}
       .bridge-guide-risk{display:grid;gap:4px;margin:10px 0;border:1px solid #f1b8b4;border-radius:6px;background:#fff4f3;color:#6f1711;padding:10px}
-      .bridge-guide-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:12px}
+      .bridge-guide-preview{display:grid;gap:2px;margin:10px 0;border:1px dashed #c8d8ea;border-radius:6px;background:#f7fbff;color:#3e4c5d;padding:8px}
+      .bridge-guide-preview span{font-size:11px;font-weight:800;text-transform:uppercase;color:#5d6978}
+      .bridge-guide-preview strong{font-size:13px}
+      .bridge-guide-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:12px}
       .bridge-guide-actions button{min-height:34px;border:1px solid #1769aa;border-radius:6px;background:#1769aa;color:#fff;cursor:pointer;font:inherit;font-size:12px}
       .bridge-guide-actions button:disabled{border-color:#d9dee7;background:#e6e9ef;color:#8792a1;cursor:not-allowed}
     `;

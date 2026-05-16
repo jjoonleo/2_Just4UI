@@ -40,6 +40,14 @@ _Avoid_: Auto-clicking, auto-typing, auto-submit
 A user-written description of what the user wants to accomplish on the current page.
 _Avoid_: Command, automation prompt, saved workflow
 
+**Task Clarification**:
+A one-question-at-a-time interview used when the next useful guidance cannot be chosen with enough confidence.
+_Avoid_: Full planning, generic chat, optional preference survey
+
+**Clarified Task Request**:
+The sharpened Task Request produced after Task Clarification has enough information for guide planning.
+_Avoid_: Raw ambiguous request, hidden assumption, model-only intent
+
 **Task Template**:
 A reusable suggested Task Request for a common page goal.
 _Avoid_: Required workflow, hardcoded site script
@@ -64,13 +72,25 @@ _Avoid_: Silent final action, hidden confirmation, automatic purchase
 A sequence of Guidance Steps created for one Task Request on one current page.
 _Avoid_: Browser automation script, regenerated page
 
+**Progressive Guidance Plan**:
+A Guidance Plan that starts with immediate next guidance and grows as the user asks for more guidance.
+_Avoid_: Full script, complete upfront workflow, rewritten history
+
+**Guidance Continuation**:
+An addition or revision that extends only the not-yet-completed part of a Progressive Guidance Plan.
+_Avoid_: Full replacement plan, rewritten completed steps, history edit
+
+**Completed Step History**:
+The immutable session record of Guidance Steps the user has already completed or passed.
+_Avoid_: Editable past steps, form values, model-rewritten history
+
 **Planning Payload**:
 A reduced Page Snapshot view sent to a model for creating a Guidance Plan.
 _Avoid_: Full raw snapshot, form values, default screenshot upload
 
 **Plan Contract**:
 The required structured shape of a Guidance Plan returned by a model.
-_Avoid_: Free-form model answer, unvalidated instructions
+_Avoid_: Free-form model answer, unvalidated instructions, separate clarification gate
 
 **Guidance Session**:
 The one active Guided Task Mode run the user is currently following.
@@ -83,6 +103,10 @@ _Avoid_: All-tabs guide, simultaneous tab overlays, saved workflow
 **Plan Refresh**:
 An update to a Guidance Plan after navigation or active-tab change using the new page evidence.
 _Avoid_: Reusing stale selectors, starting over silently
+
+**Page State Change**:
+A user-visible change inside the current Session Host Tab during an active Guidance Session that may make the current Guidance Plan stale.
+_Avoid_: Hidden mutation, background monitoring, automatic scraping
 
 **Session State**:
 The minimal information needed to continue a Guidance Session after page changes.
@@ -104,9 +128,9 @@ _Avoid_: Debug log, internal implementation step, hidden AI request
 The user-visible view of the current Guidance Session's status and activity.
 _Avoid_: Disposable start form, debug console, hidden session state
 
-**Session Expiry**:
-The conditions that end a Guidance Session so it cannot unexpectedly resume later.
-_Avoid_: Indefinite guide, hidden background continuation
+**Session End**:
+The user-controlled action that stops a Guidance Session.
+_Avoid_: Automatic expiry, hidden timeout, model-decided completion
 
 **Paused Guidance Session**:
 A Guidance Session waiting for a supported page after navigation, active-tab change, extraction failure, or overlay injection failure.
@@ -131,6 +155,17 @@ _Avoid_: Any Chrome window, global browser scope, profile-wide guide
 - **Guided Task Mode** uses a **Page Snapshot** to guide the user on the original browser page.
 - **Guide-Only Assistance** keeps page actions under the user's direct control.
 - A **Task Request** starts one **Guided Task Mode** flow.
+- A **Task Clarification** should happen only when the next useful **Guidance Step** cannot be chosen with enough confidence.
+- A **Task Clarification** should ask exactly one question when ambiguity would change which **Page Target** or action should be guided next.
+- A **Task Clarification** should not ask optional preference questions that are not needed for the next useful guidance.
+- A **Task Clarification** may use current page evidence to identify missing target, action, object, amount, account, recipient, or constraint details.
+- Missing user-entered input values should not trigger **Task Clarification** when the correct **Page Target** is identifiable.
+- When a required value is missing but the correct input **Page Target** is identifiable, the **Guidance Step** should highlight the input field and let the user choose the value.
+- Multiple plausible **Page Targets** should trigger **Task Clarification** only when they represent meaningfully different user outcomes.
+- Equivalent duplicate **Page Targets** for the same action should not trigger **Task Clarification**; the guide may choose the visible primary target.
+- A **Clarified Task Request** should be used as the input to **Guidance Plan** creation.
+- A **Task Clarification** should not create **Guidance Steps**.
+- A **Guidance Plan** may be created without **Task Clarification** when the current page evidence and **Task Request** identify the next useful **Guidance Step** with enough confidence.
 - A **Task Template** may prefill a **Task Request**.
 - A **Guidance Step** points to one primary page target.
 - A **Page Target** is matched from page evidence such as role, label, text, location, and selector.
@@ -138,26 +173,79 @@ _Avoid_: Any Chrome window, global browser scope, profile-wide guide
 - A **Risk Gate** may appear before a **Guidance Step** that involves sensitive or irreversible consequences.
 - A **Guidance Plan** is created from one **Task Request** and one **Page Snapshot**.
 - A **Guidance Plan** contains one or more **Guidance Steps**.
+- A **Progressive Guidance Plan** should add guidance as the user progresses instead of generating the full task flow upfront.
+- A **Progressive Guidance Plan** should contain the current **Guidance Step** and at most one future **Guidance Step**.
+- A **Progressive Guidance Plan** should request additional guidance at step boundaries rather than during ordinary user interaction.
+- A **Guidance Continuation** may add or revise only not-yet-completed **Guidance Steps**.
+- Completed **Guidance Steps** should not be modified or removed from a **Progressive Guidance Plan**.
+- **Completed Step History** should preserve enough non-secret step detail to show what was completed without retaining user-entered form values.
+- **Completed Step History** should be append-only for a **Guidance Session**; completed guide entries should not be removed, truncated, downgraded, or overwritten by refresh output.
+- A completed guide entry's state is strict and non-editable; it must never become current or not-completed again.
+- A refreshed **Guidance Plan** should drop any returned **Guidance Step** that matches **Completed Step History** before it is saved or rendered.
+- **Completed Step History** may be summarized for the model but should not be replaced by future model output.
+- A **Guidance Continuation** request should include compact plan-so-far context: **Completed Step History**, current page evidence, the current **Guidance Step**, and not-yet-reached future steps.
+- A **Guidance Continuation** should use plan-so-far context to avoid creating duplicate completed, current, or already-previewed **Guidance Steps**.
+- A **Guidance Continuation** request should not include old full **Page Snapshots** by default.
+- The current highlighted **Guidance Step** should remain stable unless its **Page Target** disappears or cannot be found.
+- A **Guidance Continuation** should not revise the current highlighted **Guidance Step** unless its **Page Target** is missing.
+- Future **Guidance Steps** may be added or revised before the user reaches them.
+- In a **Progressive Guidance Plan**, only the current **Guidance Step** is actionable.
+- A future **Guidance Step** may be shown as a non-actionable preview and may change before the user reaches it.
+- A **Guidance Plan** should not decide when a **Guidance Session** is complete.
+- A **Guidance Session** should end only when the user explicitly ends it or starts a replacement **Guidance Session**.
+- When a **Guidance Plan** has no remaining **Guidance Steps**, the user should choose whether to request **Guidance Continuation** or end the **Guidance Session**.
+- For sensitive or final-action targets, a **Guidance Step** may highlight the final **Page Target**, but the user still decides whether to act or end the guide.
 - A **Planning Payload** is derived from a **Page Snapshot** without form values.
+- A **Planning Payload** created after a **Page State Change** keeps the same privacy boundary as the original **Planning Payload**.
 - A **Plan Contract** makes a **Guidance Plan** predictable enough for the extension to render.
+- Initial planning and **Guidance Continuation** should use one **Plan Contract**, with empty **Completed Step History** for the first request.
+- A **Plan Contract** request should include a planner mode: `initial`, `refresh`, or `continueAfterWindowEnded`.
+- `continueAfterWindowEnded` should be addition-only after the exhausted generated guide window and should ask one **Task Clarification** rather than repeating prior steps when no new useful step is identifiable.
+- The **Plan Contract** should return either confident guidance or one **Task Clarification** question.
+- **Task Clarification** should be part of the **Plan Contract**, not a separate preflight model call.
 - A **Guidance Session** follows one **Guidance Plan** at a time.
+- A **Guidance Session** should not be considered complete only because the current **Guidance Plan** has no remaining **Guidance Steps**.
 - Starting a new **Guidance Session** replaces any existing **Guidance Session**.
 - A replacement **Guidance Session** should not remove the existing **Guidance Session** until the new **Guidance Plan** is ready.
 - A **Navigating Guidance Session** may use multiple **Page Snapshots** as the user moves through pages or active tabs in one browser window.
 - A **Plan Refresh** uses the latest **Page Snapshot** to continue a **Navigating Guidance Session**.
 - A **Plan Refresh** happens when the **Session Host Tab** changes.
+- A **Plan Refresh** should use planner mode `refresh`, not `initial`, so it cannot restart the guide.
+- A **Page State Change** may trigger a **Plan Refresh** when visible page evidence changes during an active **Guidance Session**.
+- **Page State Change** detection should be active only during an active or refreshing **Guidance Session** in the **Session Host Tab**.
+- Automatic **Plan Refresh** from meaningful **Page State Changes** should be enabled by default for a **Guidance Session** and pausable by the user for that session.
+- When the same user action completes a **Guidance Step** and causes a **Page State Change**, the step completion should be recorded before **Plan Refresh**.
+- A **Plan Refresh** request triggered by the same user action that completes a **Guidance Step** should carry that completed step record in the refresh message so request ordering cannot make the completed step appear current again.
+- A **Page State Change** is meaningful when it changes the visible task surface enough that the current or next **Guidance Step** may be stale.
+- A **Plan Refresh** should happen only after the visible task surface actually changes.
+- Layout-only movement should not count as a **Page State Change** unless it changes the usable task surface.
+- A **Page State Change** should not include visual noise that does not affect the visible task surface.
+- A same-page **Plan Refresh** should be limited to cases where the current highlighted **Page Target** disappears or the user manually advances to a **Guidance Step** whose **Page Target** cannot be found.
+- Text input changes may update **Guidance Step** progress but should not trigger automatic **Plan Refresh** while the user is actively typing.
+- Text input changes should not automatically complete a **Guidance Step** unless the expected text value is explicit.
+- Selection controls, checked states, menus, modals, and same-page route or content changes should not trigger **Plan Refresh** unless they make the current highlighted **Page Target** disappear.
+- Multiple nearby **Page State Changes** should be treated as one reason for **Plan Refresh** after the visible task surface settles.
+- A **Plan Refresh** should not trigger another **Plan Refresh** from the extension's own guide updates.
+- **Target Recovery** should be used when the current **Guidance Step** is still valid but its **Page Target** needs to be found again.
+- **Plan Refresh** should be used when a **Page State Change** makes the current or next **Guidance Step** potentially stale.
+- A **Plan Refresh** caused by a **Page State Change** should preserve **Session State** while replacing stale page-specific **Guidance Steps**.
+- A refreshed **Guidance Plan** may omit completed **Guidance Steps** from the visible guide while **Session State** preserves completed step history.
 - **Session State** preserves progress without retaining old full Page Snapshots by default.
 - **Session State** preserves completed step history across **Plan Refresh**.
 - **Session Status** tells the user whether the **Guidance Session** has no guide, is planning, active, paused, ended, or failed.
 - **Guide Activity** may appear while the extension extracts page evidence, creates or refreshes a **Guidance Plan**, or updates the visible guidance.
 - **Guide Activity Phase** explains the current **Guide Activity**.
 - **Guide Activity** does not replace **Session Status**.
+- A **Plan Refresh** caused by a **Page State Change** should appear as **Guide Activity** while the **Guidance Session** remains active.
 - Failed **Guide Activity** does not make a **Guidance Session** failed when the current **Guidance Plan** can still continue.
+- During a **Plan Refresh** caused by a **Page State Change**, the current guide should remain visible in an updating state until a refreshed **Guidance Plan** is ready.
+- A failed **Plan Refresh** caused by a **Page State Change** should keep the previous **Guidance Plan** available when it can still continue.
 - A **Session Dashboard** presents the current **Session Status** and **Guide Activity** for the **Guidance Session**.
 - A **Session Dashboard** may present the **Task Request**, current **Guidance Step**, and latest pause or failure reason.
+- A **Session Dashboard** should show the generated guide so far with each step's completed, current, or not-completed state.
 - A **Session Dashboard** may be reopened without losing the current **Guidance Session** view.
 - A **Session Dashboard** may let the user end an active or paused **Guidance Session**.
-- **Session Expiry** ends stale or failed **Guidance Sessions**.
+- A **Guidance Session** should not end because of timeout, unsupported navigation, closed host tab, closed Session Window, refresh failure, or exhausted steps.
 - A **Paused Guidance Session** may resume on the next supported page in the same Session Window.
 - A **Guidance Session** has at most one **Session Host Tab** at a time.
 - A **Navigating Guidance Session** belongs to exactly one **Session Window**.
@@ -225,10 +313,10 @@ _Avoid_: Any Chrome window, global browser scope, profile-wide guide
 > **Domain expert:** "No — keep only **Session State** and extract a fresh **Page Snapshot** after navigation."
 >
 > **Dev:** "Should a guide resume forever until manually removed?"
-> **Domain expert:** "No — use **Session Expiry** when the user ends it, starts a new guide, the Session Window closes, refresh fails repeatedly, or the session becomes stale."
+> **Domain expert:** "Yes — keep the **Guidance Session** until the user explicitly ends it or starts a replacement guide."
 >
 > **Dev:** "Should unsupported pages immediately end a guide?"
-> **Domain expert:** "No — make it a **Paused Guidance Session** once, then expire it if refresh keeps failing."
+> **Domain expert:** "No — make it a **Paused Guidance Session** until the user ends it or starts a replacement guide."
 >
 > **Dev:** "Should a restricted page keep showing the previous tab's guide?"
 > **Domain expert:** "No — the stale overlay should be removed, while the **Paused Guidance Session** waits for a supported page."
@@ -279,10 +367,10 @@ _Avoid_: Any Chrome window, global browser scope, profile-wide guide
 - "Host-tab change" was resolved as a **Plan Refresh** boundary, not an existing-plan reuse case.
 - "Unrelated active tabs" were resolved as eligible **Session Host Tabs**.
 - "Completed steps across tabs" were resolved as preserved **Session State** with refreshed page-specific step numbering.
-- "Closing the host tab" was resolved as a host move within the **Session Window**, not immediate **Session Expiry**.
+- "Closing the host tab" was resolved as a host move within the **Session Window** when possible, not an automatic **Session End**.
 - "Continue on a new page" was resolved as **Plan Refresh**, not stale-plan reuse.
 - "What survives navigation" was resolved as minimal **Session State**, not old full Page Snapshots.
-- "How long persistence lasts" was resolved as bounded by **Session Expiry**.
-- "Multi-tab expiry" was resolved as explicit end, new guide replacement, Session Window closure, repeated refresh failure, or TTL.
-- "Unsupported navigation" was resolved as a **Paused Guidance Session** before expiry.
+- "How long persistence lasts" was resolved as until explicit **Session End** or replacement by a new **Guidance Session**.
+- "Multi-tab expiry" was rejected; host-tab closure, Session Window closure, repeated refresh failure, and TTL should not end the **Guidance Session**.
+- "Unsupported navigation" was resolved as a **Paused Guidance Session** until the user ends or replaces it.
 - "Unsupported active tab" was resolved as a **Paused Guidance Session** with no stale overlay.
