@@ -49,7 +49,8 @@ textarea {
 .controls,
 .statusPanel,
 .summary,
-.actions {
+.actions,
+.patchPanel {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -128,6 +129,53 @@ button:disabled {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.patchPanel {
+  display: grid;
+  gap: 10px;
+}
+
+.patchPanel h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.patchPanel p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.patchActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.workflowActions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.workflowActions button {
+  min-height: 36px;
+}
+
+#applyDemoPatchButton,
+#resetPatchButton,
+#geminiRequestButton {
+  border-color: var(--line);
+  background: var(--panel);
+  color: var(--accent);
+}
+
+#applyDemoPatchButton:hover:not(:disabled),
+#resetPatchButton:hover:not(:disabled),
+#geminiRequestButton:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: #eef6fc;
 }
 
 #output {

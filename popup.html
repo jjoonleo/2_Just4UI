@@ -54,6 +54,28 @@
         <button id="downloadButton" type="button" disabled>Download JSON</button>
       </section>
 
+      <section class="patchPanel" aria-label="Live UI patch prototype">
+        <div>
+          <h2>Live UI patch</h2>
+          <p>Build staged Gemini requests from the snapshot, then apply safe selector-based patch JSON to the live tab.</p>
+        </div>
+
+        <div class="workflowActions" aria-label="Staged AI patch workflow">
+          <button id="pageAnalysisRequestButton" type="button" disabled>Build Page Analysis request</button>
+          <button id="acceptPageAnalysisButton" type="button" disabled>Accept Page Analysis</button>
+          <button id="strategyRequestButton" type="button" disabled>Build Strategy request</button>
+          <button id="acceptStrategyButton" type="button" disabled>Accept Strategy</button>
+          <button id="patchPlanRequestButton" type="button" disabled>Build Patch Plan request</button>
+        </div>
+
+        <div class="patchActions">
+          <button id="geminiRequestButton" type="button" disabled>Legacy one-shot request</button>
+          <button id="applyDemoPatchButton" type="button">Apply demo patch</button>
+          <button id="applyPatchButton" type="button">Apply JSON patch</button>
+          <button id="resetPatchButton" type="button">Reset patch</button>
+        </div>
+      </section>
+
       <textarea id="output" spellcheck="false" aria-label="Extracted snapshot JSON" placeholder="Snapshot JSON will appear here."></textarea>
     </main>
 
