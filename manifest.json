@@ -4,11 +4,17 @@
   "description": "Extracts a privacy-conscious snapshot of the current page for accessibility simplification research.",
   "version": "0.1.0",
   "action": {
-    "default_title": "Extract page snapshot",
-    "default_popup": "popup.html"
+    "default_title": "Open Bridge side panel"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   },
   "permissions": [
     "activeTab",
-    "scripting"
+    "scripting",
+    "sidePanel"
   ]
 }

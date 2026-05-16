@@ -159,22 +159,22 @@ function header(model) {
       <div class="top-strip">
         <div class="top-strip-inner">
           <ul class="quick-links">
-            <li><a href="${at(model.page.origin || "#")}" target="_blank" rel="noopener">즐겨찾기</a></li>
-            <li><a href="${at(model.product.brandHref)}" target="_blank" rel="noopener">입점신청</a></li>
+            <li><a href="${at(model.page.origin || "#")}">즐겨찾기</a></li>
+            <li><a href="${at(model.product.brandHref)}">입점신청</a></li>
           </ul>
           <ul class="top-links">${model.header.topLinks.map(linkItem).join("")}</ul>
         </div>
       </div>
       <div class="header-main">
-        <a class="brand-logo" href="${at(model.page.origin || "#")}" target="_blank" rel="noopener">${logo}</a>
+        <a class="brand-logo" href="${at(model.page.origin || "#")}">${logo}</a>
         <form class="search-form">
           <select aria-label="Search category">${(model.header.categories.length ? model.header.categories : ["전체"]).map((item) => `<option>${esc(item)}</option>`).join("")}</select>
           <input id="searchInput" type="search" name="${at(model.header.searchName)}" placeholder="${at(model.header.searchPlaceholder)}" value="${at(state.filter)}">
           <button type="submit" aria-label="검색">Search</button>
         </form>
         <div class="header-actions">
-          <a class="header-action" href="${at(findHref(model.header.topLinks, "로그인"))}" target="_blank" rel="noopener">로그인</a>
-          <a class="header-action" href="${at(findHref(model.header.topLinks, "회원가입"))}" target="_blank" rel="noopener">회원가입</a>
+          <a class="header-action" href="${at(findHref(model.header.topLinks, "로그인"))}">로그인</a>
+          <a class="header-action" href="${at(findHref(model.header.topLinks, "회원가입"))}">회원가입</a>
           <button class="header-action" type="button" data-action="cart">장바구니<span id="cartCount" class="cart-badge">0</span></button>
         </div>
       </div>
@@ -187,7 +187,7 @@ function header(model) {
 
 function breadcrumbs(items) {
   if (!items.length) return "";
-  return `<div class="breadcrumb-wrap"><ol class="breadcrumb">${items.map((item) => `<li><a href="${at(item.href || "#")}" target="_blank" rel="noopener">${esc(item.text)}</a></li>`).join("")}</ol></div>`;
+  return `<div class="breadcrumb-wrap"><ol class="breadcrumb">${items.map((item) => `<li><a href="${at(item.href || "#")}">${esc(item.text)}</a></li>`).join("")}</ol></div>`;
 }
 
 function productInfo(product) {
@@ -200,7 +200,7 @@ function productInfo(product) {
   `).join("");
   return `
     <section class="product-info" aria-labelledby="productTitle">
-      <a class="brand-row" href="${at(product.brandHref)}" target="_blank" rel="noopener">${brandLogo}<span>${esc(product.brandName)}</span></a>
+      <a class="brand-row" href="${at(product.brandHref)}">${brandLogo}<span>${esc(product.brandName)}</span></a>
       <h1 id="productTitle" class="product-title">${esc(product.title)}</h1>
       <div class="rating-row"><span class="stars">★★★★★</span><a class="review-link" href="#reviews">${esc(product.reviewText)}</a></div>
       ${product.proof ? `<p class="proof-row">${esc(product.proof)}</p>` : ""}
@@ -213,7 +213,7 @@ function productInfo(product) {
         <button class="secondary-button" type="button" data-action="add-cart">장바구니 담기</button>
         <button class="primary-button" type="button" data-action="buy">바로구매</button>
       </div>
-      <div class="mini-actions"><a class="ghost-button" href="${at(product.originalUrl)}" target="_blank" rel="noopener">원본 페이지</a><button class="ghost-button" type="button" data-action="share">공유</button></div>
+      <div class="mini-actions"><a class="ghost-button" href="${at(product.originalUrl)}">원본 페이지</a><button class="ghost-button" type="button" data-action="share">공유</button></div>
       <div class="spec-box"><p class="box-label">상품 정보</p><ul class="spec-list">${product.specs.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div>
     </section>
   `;
@@ -261,7 +261,7 @@ function cardSection(id, title, cards, filter = false) {
 function card(item) {
   const image = item.image ? `<img class="card-image" src="${at(item.image)}" alt="${at(item.title)}" loading="lazy">` : `<div class="card-image"></div>`;
   return `
-    <a class="product-card" href="${at(item.href)}" target="_blank" rel="noopener" data-card-text="${at(item.searchText)}">
+    <a class="product-card" href="${at(item.href)}" data-card-text="${at(item.searchText)}">
       ${image}
       ${item.deal ? `<span class="deal-badge">특가</span>` : ""}
       <span class="card-title">${esc(item.title)}</span>
@@ -302,7 +302,7 @@ function policies(model) {
 }
 
 function footer(model) {
-  return `<footer class="footer"><div class="footer-inner"><span>${esc(model.page.title || "")}</span><a href="${at(model.page.canonicalUrl || model.page.url || "#")}" target="_blank" rel="noopener">Canonical URL</a><span>Collected ${esc(model.snapshot.collectedAt || "")}</span></div></footer>`;
+  return `<footer class="footer"><div class="footer-inner"><span>${esc(model.page.title || "")}</span><a href="${at(model.page.canonicalUrl || model.page.url || "#")}">Canonical URL</a><span>Collected ${esc(model.snapshot.collectedAt || "")}</span></div></footer>`;
 }
 
 function onSubmit(event) {
@@ -358,7 +358,7 @@ function onClick(event) {
   if (action === "cart") openCart();
   if (action === "sellers") openSellers();
   if (action === "cashback") openModal("쿠팡캐시 적립", "<p>선택한 결제 수단과 멤버십 조건에 따라 적립 혜택이 적용됩니다.</p>");
-  if (action === "question") openModal("문의하기", `<p>로그인 후 원본 상품 페이지에서 상품 문의를 등록할 수 있습니다.</p><p><a class="primary-button" href="${at(state.model.product.originalUrl)}" target="_blank" rel="noopener">원본 페이지 열기</a></p>`);
+  if (action === "question") openModal("문의하기", `<p>로그인 후 원본 상품 페이지에서 상품 문의를 등록할 수 있습니다.</p><p><a class="primary-button" href="${at(state.model.product.originalUrl)}">원본 페이지 열기</a></p>`);
   if (action === "share") share();
   if (action === "clear-filter") {
     state.filter = "";
@@ -377,7 +377,7 @@ function openOrder() {
       <div class="summary-line"><span>수량</span><strong>${state.quantity}</strong></div>
       <div class="summary-line"><span>파손케어</span><strong>${esc(state.insurance)}</strong></div>
       <div class="summary-line"><span>상품금액</span><strong class="summary-total">${esc(total)}</strong></div>
-      <a class="primary-button" href="${at(product.originalUrl)}" target="_blank" rel="noopener">원본에서 계속</a>
+      <a class="primary-button" href="${at(product.originalUrl)}">원본에서 계속</a>
     </div>
   `);
 }
@@ -547,7 +547,7 @@ function parseDelivery(text) {
 }
 
 function linkItem(item) {
-  return `<li><a href="${at(item.href || "#")}" target="_blank" rel="noopener">${esc(item.text)}</a></li>`;
+  return `<li><a href="${at(item.href || "#")}">${esc(item.text)}</a></li>`;
 }
 
 function unique(items) {
