@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bridge Page Snapshot</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="header">
+        <div>
+          <h1>Page Snapshot</h1>
+          <p>Extract the active page after you choose to inspect it.</p>
+        </div>
+      </header>
+
+      <section class="controls" aria-label="Snapshot controls">
+        <label class="option">
+          <input id="includeScreenshot" type="checkbox">
+          <span>Include visible screenshot</span>
+        </label>
+
+        <button id="extractButton" type="button">Extract current page</button>
+      </section>
+
+      <section class="statusPanel" aria-live="polite">
+        <p id="status">Ready.</p>
+      </section>
+
+      <section class="summary" aria-label="Snapshot summary">
+        <dl>
+          <div>
+            <dt>Text blocks</dt>
+            <dd id="textCount">0</dd>
+          </div>
+          <div>
+            <dt>Interactive</dt>
+            <dd id="interactiveCount">0</dd>
+          </div>
+          <div>
+            <dt>Forms</dt>
+            <dd id="formCount">0</dd>
+          </div>
+          <div>
+            <dt>Images</dt>
+            <dd id="imageCount">0</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="actions" aria-label="Snapshot actions">
+        <button id="copyButton" type="button" disabled>Copy JSON</button>
+        <button id="downloadButton" type="button" disabled>Download JSON</button>
+      </section>
+
+      <textarea id="output" spellcheck="false" aria-label="Extracted snapshot JSON" placeholder="Snapshot JSON will appear here."></textarea>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

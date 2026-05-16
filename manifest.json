@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Bridge Page Snapshot",
+  "description": "Extracts a privacy-conscious snapshot of the current page for accessibility simplification research.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Extract page snapshot",
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ]
+}

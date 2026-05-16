@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Extensions and AI - simplified</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">기본 콘텐츠로 건너뛰기</a>
+
+    <header class="site-header">
+      <div class="topbar">
+        <a class="brand" data-home-link href="#">Chrome for Developers</a>
+        <nav id="topNav" class="top-nav" aria-label="Primary"></nav>
+        <form id="searchForm" class="search" role="search">
+          <input id="searchInput" type="search" name="q" autocomplete="off" placeholder="검색" aria-label="검색">
+          <button type="submit">검색</button>
+        </form>
+        <a id="signInLink" class="signin" href="#">로그인</a>
+      </div>
+      <nav id="docNav" class="doc-nav" aria-label="Chrome Extensions"></nav>
+      <div id="breadcrumbs" class="breadcrumbs" aria-label="Breadcrumb"></div>
+    </header>
+
+    <main id="main" class="layout">
+      <aside class="toc" aria-label="On this page">
+        <div class="toc-title">이 페이지</div>
+        <nav id="tocNav"></nav>
+      </aside>
+
+      <article class="article">
+        <section class="hero">
+          <p id="metaDescription" class="eyebrow"></p>
+          <h1 id="pageTitle">Loading...</h1>
+          <p id="intro" class="intro"></p>
+          <div class="hero-actions">
+            <a id="canonicalLink" class="primary-action" href="#">원문 열기</a>
+            <button id="snapshotToggle" type="button" class="secondary-action">스냅샷 보기</button>
+          </div>
+        </section>
+
+        <section id="snapshotPanel" class="snapshot-panel" hidden>
+          <div class="section-heading">
+            <h2>캡처된 화면</h2>
+            <button type="button" class="text-button" data-action="hide-snapshot">닫기</button>
+          </div>
+          <img id="snapshotImage" alt="Captured visible viewport from the snapshot">
+        </section>
+
+        <div id="contentSections"></div>
+      </article>
+
+      <aside class="side-panel">
+        <section class="utility">
+          <h2>페이지 데이터</h2>
+          <dl id="pageFacts"></dl>
+        </section>
+        <section class="utility">
+          <h2>링크 검색 결과</h2>
+          <div id="searchResults" class="search-results">검색어를 입력하면 스냅샷의 링크와 제목을 필터링합니다.</div>
+        </section>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <div id="footerLinks"></div>
+    </footer>
+
+    <div id="cookieBar" class="cookie-bar" role="region" aria-label="cookie notice" hidden>
+      <p id="cookieText"></p>
+      <div class="cookie-actions">
+        <a id="cookieLearn" href="#">자세히 알아보세요</a>
+        <button type="button" data-action="accept-cookie">동의함</button>
+        <button type="button" data-action="dismiss-cookie">나중에</button>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <script src="./script.js"></script>
+  </body>
+</html>

@@ -1,0 +1,44 @@
+# macOS metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Editor and IDE state
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Build, cache, and coverage output
+dist/
+build/
+out/
+coverage/
+.cache/
+.parcel-cache/
+.vite/
+.tmp/
+tmp/
+temp/
+*.tmp
+
+# Chrome extension packaging output
+*.crx
+web-ext-artifacts/
