@@ -77,24 +77,32 @@ The one active Guided Task Mode run the user is currently following.
 _Avoid_: Saved plan history, background monitor, multi-plan queue
 
 **Navigating Guidance Session**:
-A Guidance Session that continues when the user moves to another page in the same browser tab.
-_Avoid_: Cross-tab guide, global browsing session, saved workflow
+A Guidance Session that continues as the user moves between pages or active tabs in the same browser window.
+_Avoid_: All-tabs guide, simultaneous tab overlays, saved workflow
 
 **Plan Refresh**:
-An update to a Guidance Plan after same-tab navigation using the new page evidence.
+An update to a Guidance Plan after navigation or active-tab change using the new page evidence.
 _Avoid_: Reusing stale selectors, starting over silently
 
 **Session State**:
 The minimal information needed to continue a Guidance Session after page changes.
-_Avoid_: Snapshot history, full-page archive, cross-tab memory
+_Avoid_: Snapshot history, full-page archive, simultaneous tab memory
 
 **Session Expiry**:
 The conditions that end a Guidance Session so it cannot unexpectedly resume later.
 _Avoid_: Indefinite guide, hidden background continuation
 
 **Paused Guidance Session**:
-A Guidance Session waiting for a supported page after a navigation where extraction or overlay injection failed.
+A Guidance Session waiting for a supported page after navigation, active-tab change, extraction failure, or overlay injection failure.
 _Avoid_: Silent failure, broken active guide
+
+**Session Host Tab**:
+The active browser tab currently displaying the user's one Guidance Session.
+_Avoid_: All guide tabs, copied guide, background tab overlay
+
+**Session Window**:
+The browser window that owns a Navigating Guidance Session.
+_Avoid_: Any Chrome window, global browser scope, profile-wide guide
 
 ## Relationships
 
@@ -117,11 +125,19 @@ _Avoid_: Silent failure, broken active guide
 - A **Planning Payload** is derived from a **Page Snapshot** without form values.
 - A **Plan Contract** makes a **Guidance Plan** predictable enough for the extension to render.
 - A **Guidance Session** follows one **Guidance Plan** at a time.
-- A **Navigating Guidance Session** may use multiple **Page Snapshots** as the user moves through pages in one tab.
+- Starting a new **Guidance Session** replaces any existing **Guidance Session**.
+- A **Navigating Guidance Session** may use multiple **Page Snapshots** as the user moves through pages or active tabs in one browser window.
 - A **Plan Refresh** uses the latest **Page Snapshot** to continue a **Navigating Guidance Session**.
+- A **Plan Refresh** happens when the **Session Host Tab** changes.
 - **Session State** preserves progress without retaining old full Page Snapshots by default.
+- **Session State** preserves completed step history across **Plan Refresh**.
 - **Session Expiry** ends stale or failed **Guidance Sessions**.
-- A **Paused Guidance Session** may resume on the next supported page in the same tab.
+- A **Paused Guidance Session** may resume on the next supported page in the same Session Window.
+- A **Guidance Session** has at most one **Session Host Tab** at a time.
+- A **Navigating Guidance Session** belongs to exactly one **Session Window**.
+- A background tab does not become the **Session Host Tab** until the user activates it.
+- Any supported active tab in the **Session Window** may become the **Session Host Tab**.
+- Closing the **Session Host Tab** may move the session to another active tab in the **Session Window**.
 
 ## Example dialogue
 
@@ -174,7 +190,7 @@ _Avoid_: Silent failure, broken active guide
 > **Domain expert:** "No — one **Guidance Session** follows one **Guidance Plan** at a time."
 >
 > **Dev:** "Should the guide continue if the user moves to another page?"
-> **Domain expert:** "Yes, a **Navigating Guidance Session** should continue across pages in the same browser tab."
+> **Domain expert:** "Yes, a **Navigating Guidance Session** should continue across pages and active tabs in the same browser window."
 >
 > **Dev:** "Should the old plan be reused after navigation?"
 > **Domain expert:** "No — use **Plan Refresh** so the guide is based on the new page evidence."
@@ -183,10 +199,37 @@ _Avoid_: Silent failure, broken active guide
 > **Domain expert:** "No — keep only **Session State** and extract a fresh **Page Snapshot** after navigation."
 >
 > **Dev:** "Should a guide resume forever until manually removed?"
-> **Domain expert:** "No — use **Session Expiry** when the user ends it, the tab closes, a new guide starts, refresh fails, or the session becomes stale."
+> **Domain expert:** "No — use **Session Expiry** when the user ends it, starts a new guide, the Session Window closes, refresh fails repeatedly, or the session becomes stale."
 >
 > **Dev:** "Should unsupported pages immediately end a guide?"
 > **Domain expert:** "No — make it a **Paused Guidance Session** once, then expire it if refresh keeps failing."
+>
+> **Dev:** "Should a restricted page keep showing the previous tab's guide?"
+> **Domain expert:** "No — the stale overlay should be removed, while the **Paused Guidance Session** waits for a supported page."
+>
+> **Dev:** "Should the guide stay visible in the old tab after the user switches tabs?"
+> **Domain expert:** "No — the **Session Host Tab** moves to the newly active tab, so the old tab should no longer show the guide."
+>
+> **Dev:** "Should the guide follow the user into another Chrome window?"
+> **Domain expert:** "No — a **Navigating Guidance Session** stays inside its **Session Window**."
+>
+> **Dev:** "Should a background tab opened by a link immediately receive the guide?"
+> **Domain expert:** "No — only the active tab can become the **Session Host Tab**."
+>
+> **Dev:** "Should a host-tab change reuse the previous plan if the URL looks similar?"
+> **Domain expert:** "No — use **Plan Refresh** with a fresh **Page Snapshot** whenever the **Session Host Tab** changes."
+>
+> **Dev:** "Should the guide ignore an unrelated supported tab?"
+> **Domain expert:** "No — any supported active tab in the **Session Window** can become the **Session Host Tab**."
+>
+> **Dev:** "Should a refreshed guide keep completed step history?"
+> **Domain expert:** "Yes — preserve completed step history in **Session State**, but restart numbering for the refreshed page-specific **Guidance Plan**."
+>
+> **Dev:** "Can the user start a second guide while one is already active?"
+> **Domain expert:** "No — starting a new **Guidance Session** replaces the existing one and removes its old overlay."
+>
+> **Dev:** "Should closing the current host tab end the guide?"
+> **Domain expert:** "No — if the **Session Window** still has an active tab, the guide should move there and refresh."
 
 ## Flagged ambiguities
 
@@ -201,8 +244,19 @@ _Avoid_: Silent failure, broken active guide
 - "Model input" was resolved as a reduced **Planning Payload**, not the full raw Page Snapshot.
 - "Model output" was resolved as a strict **Plan Contract**, not free-form instructions.
 - "Active guide" was resolved as one **Guidance Session** at a time, without plan history.
-- "Preserved if user move to other page" was resolved as a same-tab **Navigating Guidance Session**, not a cross-tab guide.
+- "Starting a new guide" was resolved as replacing the existing **Guidance Session**, not creating a second active session.
+- "Preserved if user move to other page" was resolved as a **Navigating Guidance Session**.
+- "Persistent throughout multiple tabs" was resolved as one **Navigating Guidance Session** following the active tab in the same browser window, not simultaneous overlays in every tab.
+- "Multiple tabs" was resolved as one moving **Session Host Tab**, not duplicated guide overlays.
+- "Multiple windows" was resolved as out of scope for one **Navigating Guidance Session**.
+- "Background tabs" were resolved as inactive until explicitly activated by the user.
+- "Host-tab change" was resolved as a **Plan Refresh** boundary, not an existing-plan reuse case.
+- "Unrelated active tabs" were resolved as eligible **Session Host Tabs**.
+- "Completed steps across tabs" were resolved as preserved **Session State** with refreshed page-specific step numbering.
+- "Closing the host tab" was resolved as a host move within the **Session Window**, not immediate **Session Expiry**.
 - "Continue on a new page" was resolved as **Plan Refresh**, not stale-plan reuse.
 - "What survives navigation" was resolved as minimal **Session State**, not old full Page Snapshots.
 - "How long persistence lasts" was resolved as bounded by **Session Expiry**.
+- "Multi-tab expiry" was resolved as explicit end, new guide replacement, Session Window closure, repeated refresh failure, or TTL.
 - "Unsupported navigation" was resolved as a **Paused Guidance Session** before expiry.
+- "Unsupported active tab" was resolved as a **Paused Guidance Session** with no stale overlay.

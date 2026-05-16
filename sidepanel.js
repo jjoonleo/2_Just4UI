@@ -170,7 +170,7 @@ async function startGuidedTaskMode() {
       throw new Error(response?.error || "Failed to start Guided Task Mode.");
     }
 
-    setStatus("Guided Task Mode started. It will continue in this tab after navigation.");
+    setStatus("Guided Task Mode started. It will follow the active tab in this window.");
   } catch (error) {
     setStatus(error.message || "Failed to start Guided Task Mode.", true);
   } finally {

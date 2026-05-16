@@ -18,6 +18,7 @@ Pivot the project from rebuilding simplified pages to **Guided Task Mode**: a Ch
 - Use **Guide-Only Assistance**: the extension may highlight, scroll, explain, and observe; it must not click, type, submit, purchase, delete, or confirm on the user's behalf.
 - Start each flow from a user-written **Task Request**. Add **Task Templates** later as convenience shortcuts.
 - Use one active **Guidance Session** at a time. Do not add saved plan history or background monitoring in the first version.
+- Let the active **Guidance Session** follow the active tab in its original browser window; do not duplicate overlays across tabs or follow into other windows.
 - A **Guidance Step** must have one primary **Page Target**. Split multi-action instructions into multiple steps.
 - Use **Target Recovery** when a target disappears: re-scan once, attempt to match by evidence, then show a clear target-not-found state.
 - Use **Risk Gates** before sensitive or irreversible guidance, such as final checkout, payment, account deletion, submitting personal information, or destructive changes.
@@ -208,8 +209,13 @@ Risk Gate behavior:
    - Invalid Plan Contract.
    - Target not found.
    - Unsupported Chrome page.
-11. Keep `regenerated/` as a demo/reference artifact, but stop treating it as the main simplification path.
-12. Update README after implementation to describe Guided Task Mode and prototype API-key limitations.
+11. Add multi-tab session movement:
+   - Store the Session Window and current Session Host Tab.
+   - Move the host only on active-tab change, not background-tab creation.
+   - Remove the old overlay before refreshing the guide on the new host tab.
+   - Preserve completed step history while resetting the refreshed page-specific step index.
+12. Keep `regenerated/` as a demo/reference artifact, but stop treating it as the main simplification path.
+13. Update README after implementation to describe Guided Task Mode and prototype API-key limitations.
 
 ## Validation
 
@@ -218,6 +224,8 @@ Risk Gate behavior:
 - Verify the overlay highlights the intended element and does not break page interaction.
 - Verify links, forms, and page buttons still work because the original page remains intact.
 - Verify a high-risk task renders a Risk Gate before the sensitive step.
+- Verify switching tabs in the same browser window moves the guide to the active tab and removes the old overlay.
+- Verify switching Chrome windows does not move the guide out of its original window.
 - Verify removing/changing a target triggers Target Recovery once.
 - Verify invalid model JSON is rejected with a clear error.
 - Verify no API key is committed to the repo.
