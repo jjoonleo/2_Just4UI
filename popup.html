@@ -24,6 +24,41 @@
         <button id="extractButton" type="button">Extract current page</button>
       </section>
 
+      <section class="guidePanel" aria-label="Guided task mode">
+        <div class="sectionTitle">
+          <h2>Guided Task Mode</h2>
+          <p>Use the original page and show step-by-step guidance.</p>
+        </div>
+
+        <label class="field">
+          <span>Provider</span>
+          <select id="providerSelect">
+            <option value="gemini">Gemini</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span id="apiKeyLabel">Gemini API key</span>
+          <input id="apiKeyInput" type="password" autocomplete="off" placeholder="AIza...">
+        </label>
+
+        <label class="field">
+          <span>Model</span>
+          <input id="modelInput" type="text" value="gemini-2.5-flash" autocomplete="off">
+        </label>
+
+        <label class="field">
+          <span>Task request</span>
+          <textarea id="taskRequestInput" spellcheck="true" placeholder="Example: Find the return policy, or help me buy this item with quantity 2."></textarea>
+        </label>
+
+        <div class="guideActions">
+          <button id="startGuideButton" type="button">Start guide</button>
+          <button id="clearKeyButton" type="button">Clear key</button>
+        </div>
+      </section>
+
       <section class="statusPanel" aria-live="polite">
         <p id="status">Ready.</p>
       </section>

@@ -47,6 +47,7 @@ textarea {
 }
 
 .controls,
+.guidePanel,
 .statusPanel,
 .summary,
 .actions {
@@ -59,6 +60,67 @@ textarea {
 .controls {
   display: grid;
   gap: 12px;
+}
+
+.guidePanel {
+  display: grid;
+  gap: 12px;
+}
+
+.sectionTitle h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.sectionTitle p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 10px;
+  background: #ffffff;
+  color: var(--text);
+}
+
+.field textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.guideActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+#clearKeyButton {
+  border-color: var(--line);
+  background: #ffffff;
+  color: var(--text);
+}
+
+#clearKeyButton:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: #eef6fd;
 }
 
 .option {

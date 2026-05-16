@@ -7,8 +7,19 @@
     "default_title": "Extract page snapshot",
     "default_popup": "popup.html"
   },
+  "background": {
+    "service_worker": "background.js"
+  },
   "permissions": [
     "activeTab",
-    "scripting"
+    "scripting",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*",
+    "https://api.openai.com/*",
+    "https://generativelanguage.googleapis.com/*"
   ]
 }
