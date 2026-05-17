@@ -22,6 +22,7 @@
   "host_permissions": [
     "http://*/*",
     "https://*/*",
+    "file:///*",
     "https://generativelanguage.googleapis.com/*"
   ]
 }
