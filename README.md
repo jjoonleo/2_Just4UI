@@ -2,6 +2,15 @@
 
 Chrome extension prototype that guides a user through a task on the original browser page instead of regenerating or automating the page.
 
+## Simplify Current Page
+
+1. Open a normal `http://` or `https://` page.
+2. Open the extension side panel.
+3. Paste a Gemini API key.
+4. Click **Simplify current page** in the **Simplify Current Page** panel.
+
+The extension uses the PersonaLens simplify flow: it injects `content.js`, extracts a DOM summary, asks Gemini for the same reconstruction plan shape, and applies the result back to the original page with `APPLY_ACTIONS`. Click **Reset simplified page** to restore the original page structure.
+
 ## Guided Task Mode Prototype
 
 1. Open a normal `http://` or `https://` page.

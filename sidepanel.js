@@ -12,6 +12,8 @@ const clarificationQuestion = document.getElementById("clarificationQuestion");
 const clarificationAnswerInput = document.getElementById("clarificationAnswerInput");
 const answerClarificationButton = document.getElementById("answerClarificationButton");
 const cancelClarificationButton = document.getElementById("cancelClarificationButton");
+const simplifyPageButton = document.getElementById("simplifyPageButton");
+const resetSimplifiedPageButton = document.getElementById("resetSimplifiedPageButton");
 const startGuideButton = document.getElementById("startGuideButton");
 const clearKeyButton = document.getElementById("clearKeyButton");
 const sessionStatusText = document.getElementById("sessionStatusText");
@@ -26,6 +28,9 @@ const generatedGuideList = document.getElementById("generatedGuideList");
 const autoRefreshButton = document.getElementById("autoRefreshButton");
 const endGuideButton = document.getElementById("endGuideButton");
 let currentAutoRefreshPaused = false;
+
+const SIMPLIFY_DEFAULT_PERSONA =
+  "Elderly user with weak vision and low digital literacy. They get confused by dense pages and many buttons.";
 
 const GUIDE_STORAGE_KEYS = {
   provider: "bridgeModelProvider",
@@ -79,6 +84,8 @@ const SESSION_STATUS_TEXT = {
 
 startGuideButton.addEventListener("click", startGuidedTaskMode);
 clearKeyButton.addEventListener("click", clearStoredApiKey);
+simplifyPageButton.addEventListener("click", simplifyCurrentPage);
+resetSimplifiedPageButton.addEventListener("click", resetSimplifiedPage);
 providerSelect.addEventListener("change", updateProviderFields);
 taskRequestInput.addEventListener("input", resetTaskClarification);
 answerClarificationButton.addEventListener("click", answerTaskClarification);
@@ -109,6 +116,86 @@ async function clearStoredApiKey() {
   await chrome.storage.local.remove(PROVIDER_DEFAULTS[provider].apiKeyStorageKey);
   apiKeyInput.value = "";
   setStatus(`Stored ${PROVIDER_DEFAULTS[provider].label} cleared.`);
+}
+
+async function simplifyCurrentPage() {
+  const provider = getSelectedProvider();
+  const providerConfig = PROVIDER_DEFAULTS[provider];
+  const apiKey = apiKeyInput.value.trim();
+
+  if (!apiKey) {
+    setStatus(`Enter a ${providerConfig.label} for the prototype.`, true);
+    apiKeyInput.focus();
+    return;
+  }
+
+  setBusy(true, "Simplifying page...");
+  setStatus("Extracting page UI...");
+
+  try {
+    await chrome.storage.local.set({
+      [GUIDE_STORAGE_KEYS.provider]: provider,
+      [providerConfig.apiKeyStorageKey]: apiKey,
+    });
+
+    const domResponse = await sendMessageToActiveTab({
+      type: "EXTRACT_DOM",
+    });
+
+    if (!domResponse?.ok) {
+      throw new Error(domResponse?.error || "Failed to extract DOM from the page.");
+    }
+
+    setStatus("Asking AI to simplify the UI...");
+
+    const result = await window.PersonaLensGemini.simplifyPageWithGemini({
+      persona: SIMPLIFY_DEFAULT_PERSONA,
+      domSummary: domResponse.summary,
+      apiKey,
+    });
+
+    if (!isValidSimplificationResult(result)) {
+      throw new Error("AI response did not contain a valid reconstruction.");
+    }
+
+    setStatus("Applying simplified UI...");
+
+    const applyResponse = await sendMessageToActiveTab({
+      type: "APPLY_ACTIONS",
+      payload: result,
+    });
+
+    if (!applyResponse?.ok) {
+      throw new Error(applyResponse?.error || "Failed to apply UI changes.");
+    }
+
+    setStatus("Simplified UI applied.");
+  } catch (error) {
+    setStatus(error.message || "Failed to simplify current page.", true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function resetSimplifiedPage() {
+  setBusy(true, "Resetting page...");
+  setStatus("Resetting simplified page...");
+
+  try {
+    const response = await sendMessageToActiveTab({
+      type: "RESET_ACTIONS",
+    });
+
+    if (!response?.ok) {
+      throw new Error(response?.error || "Failed to reset simplified page.");
+    }
+
+    setStatus("Original page restored.");
+  } catch (error) {
+    setStatus(error.message || "Failed to reset simplified page.", true);
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function refreshSessionDashboard() {
@@ -328,6 +415,8 @@ function resetTaskClarification() {
 }
 
 function setBusy(isBusy, busyText = "Working...") {
+  simplifyPageButton.disabled = isBusy;
+  resetSimplifiedPageButton.disabled = isBusy;
   startGuideButton.disabled = isBusy || Boolean(clarificationState?.question);
   clearKeyButton.disabled = isBusy;
   answerClarificationButton.disabled = isBusy;
@@ -456,4 +545,97 @@ function formatGuideTarget(target = {}) {
   const role = target.role || "";
   if (role && label) return `${role}: ${label}`;
   return label || role;
+}
+
+async function getActiveTab() {
+  const [tab] = await chrome.tabs.query({
+    active: true,
+    currentWindow: true,
+  });
+
+  if (!tab || !tab.id) {
+    throw new Error("No active tab found.");
+  }
+
+  return tab;
+}
+
+function isInjectableUrl(url) {
+  if (!url) return false;
+
+  return (
+    url.startsWith("http://") ||
+    url.startsWith("https://") ||
+    url.startsWith("file://")
+  );
+}
+
+async function ensurePersonaLensContentScript(tab) {
+  if (!isInjectableUrl(tab.url)) {
+    throw new Error(
+      "This page cannot be modified. Try a normal public website such as https://example.com or your local demo page.",
+    );
+  }
+
+  try {
+    const response = await chrome.tabs.sendMessage(tab.id, {
+      type: "PING",
+    });
+
+    if (response?.ok) {
+      return;
+    }
+  } catch {
+    // The PersonaLens content script is not loaded yet; inject it below.
+  }
+
+  await chrome.scripting.executeScript({
+    target: {
+      tabId: tab.id,
+    },
+    files: ["content.js"],
+  });
+
+  await sleep(120);
+
+  try {
+    const response = await chrome.tabs.sendMessage(tab.id, {
+      type: "PING",
+    });
+
+    if (!response?.ok) {
+      throw new Error("Content script did not respond after injection.");
+    }
+  } catch {
+    throw new Error(
+      "Could not connect to the webpage. Refresh the page and try again. Some pages block extension scripts.",
+    );
+  }
+}
+
+async function sendMessageToActiveTab(message) {
+  const tab = await getActiveTab();
+
+  await ensurePersonaLensContentScript(tab);
+
+  return chrome.tabs.sendMessage(tab.id, message);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isValidSimplificationResult(result) {
+  if (!result || typeof result !== "object") return false;
+
+  const hasActionPlan = Array.isArray(result.actions);
+  const hasReconstructionPlan =
+    result.mode === "reconstruct" &&
+    (
+      Array.isArray(result.elements) ||
+      Array.isArray(result.reconstruction?.elements) ||
+      Array.isArray(result.layout?.elements)
+    );
+
+  return hasActionPlan || hasReconstructionPlan;
 }
