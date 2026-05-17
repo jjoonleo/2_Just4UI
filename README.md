@@ -1,17 +1,20 @@
-# Bridge Guided Task Mode
+# Bridge Browser Assistance Prototype
 
-Chrome extension prototype that guides a user through a task on the original browser page instead of regenerating or automating the page.
+Chrome extension prototype with two assistance modes for the current browser page:
 
-## Simplify Current Page
+- **UI Regeneration** simplifies the current page into a clearer, easier-to-read layout.
+- **Guided Task Mode** keeps the original page intact and shows step-by-step guidance for a user task.
+
+## 1. UI Regeneration
 
 1. Open a normal `http://` or `https://` page.
 2. Open the extension side panel.
 3. Paste a Gemini API key.
 4. Click **Simplify current page** in the **Simplify Current Page** panel.
 
-The extension uses the PersonaLens simplify flow: it injects `content.js`, extracts a DOM summary, asks Gemini for the same reconstruction plan shape, and applies the result back to the original page with `APPLY_ACTIONS`. Click **Reset simplified page** to restore the original page structure.
+This mode uses the PersonaLens simplify flow. The extension injects `content.js`, extracts a visible DOM summary, asks Gemini for a reconstruction plan, and applies the result back to the original page with `APPLY_ACTIONS`. The regenerated UI reuses existing page elements, enlarges and reorganizes important content, and hides clutter. Click **Reset simplified page** to restore the original page structure.
 
-## Guided Task Mode Prototype
+## 2. Guided Task Mode
 
 1. Open a normal `http://` or `https://` page.
 2. Open the extension side panel.
@@ -31,7 +34,7 @@ Prototype limitation: the API key is stored in `chrome.storage.local` and used d
 2. Enable **Developer mode**.
 3. Click **Load unpacked**.
 4. Select this folder: `/Users/ejunpark/Documents/brigde_hakerthon`.
-5. Open a normal web page, click the extension to open the side panel, then start Guided Task Mode.
+5. Open a normal web page, click the extension to open the side panel, then use either **Simplify current page** or **Start guide**.
 
 Chrome blocks extensions from injecting scripts into internal pages such as `chrome://extensions`, the Chrome Web Store, and some browser-owned pages. Test on regular `http://` or `https://` pages.
 
