@@ -31,9 +31,7 @@ let currentAutoRefreshPaused = false;
 const GUIDE_STORAGE_KEYS = {
   provider: "bridgeModelProvider",
   geminiApiKey: "bridgeGeminiApiKey",
-  geminiModel: "bridgeGeminiModel",
-  openAiApiKey: "bridgeOpenAiApiKey",
-  openAiModel: "bridgeOpenAiModel"
+  geminiModel: "bridgeGeminiModel"
 };
 
 const PROVIDER_DEFAULTS = {
@@ -43,19 +41,11 @@ const PROVIDER_DEFAULTS = {
     model: "gemini-2.5-flash",
     apiKeyStorageKey: GUIDE_STORAGE_KEYS.geminiApiKey,
     modelStorageKey: GUIDE_STORAGE_KEYS.geminiModel
-  },
-  openai: {
-    label: "Gemini API key",
-    placeholder: "sk-...",
-    model: "gpt-4.1-mini",
-    apiKeyStorageKey: GUIDE_STORAGE_KEYS.openAiApiKey,
-    modelStorageKey: GUIDE_STORAGE_KEYS.openAiModel
   }
 };
 
 const PROVIDER_DISPLAY_LABELS = {
-  gemini: "Gemini",
-  openai: "Gemini"
+  gemini: "Gemini"
 };
 
 let clarificationState = null;
@@ -98,9 +88,9 @@ refreshSessionDashboard();
 
 async function restoreGuideSettings() {
   const stored = await chrome.storage.local.get(Object.values(GUIDE_STORAGE_KEYS));
-  providerSelect.value = "openai";
-  if (stored[GUIDE_STORAGE_KEYS.provider] !== "openai") {
-    await chrome.storage.local.set({ [GUIDE_STORAGE_KEYS.provider]: "openai" });
+  providerSelect.value = "gemini";
+  if (stored[GUIDE_STORAGE_KEYS.provider] !== "gemini") {
+    await chrome.storage.local.set({ [GUIDE_STORAGE_KEYS.provider]: "gemini" });
   }
   applyProviderFields(stored);
 }
@@ -177,7 +167,7 @@ function applyProviderFields(stored = {}) {
 }
 
 function getSelectedProvider() {
-  return "openai";
+  return "gemini";
 }
 
 async function startGuidedTaskMode() {

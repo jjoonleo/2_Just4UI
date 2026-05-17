@@ -16,11 +16,6 @@ const PROVIDER_CONFIG = {
     defaultModel: "gemini-2.5-flash",
     label: "Gemini",
   },
-  openai: {
-    apiKeyStorageKey: "bridgeOpenAiApiKey",
-    defaultModel: "gpt-5.4-mini",
-    label: "Gemini",
-  },
 };
 const pageStateRefreshes = new Map();
 
@@ -1146,8 +1141,8 @@ function compactContinuationTarget(target = {}) {
   });
 }
 
-function normalizeProvider(provider) {
-  return provider === "openai" ? "openai" : "gemini";
+function normalizeProvider() {
+  return "gemini";
 }
 
 function createPlanningPayload(snapshot) {
@@ -1232,7 +1227,6 @@ function createPlanningPayload(snapshot) {
 
 async function createGuidancePlan({
   mode = GUIDANCE_PLAN_MODES.INITIAL,
-  provider,
   apiKey,
   model,
   taskRequest,
@@ -1241,17 +1235,6 @@ async function createGuidancePlan({
   clarificationHistory = [],
 }) {
   const normalizedMode = normalizeGuidancePlanMode(mode);
-  if (provider === "openai") {
-    return createOpenAiGuidancePlan({
-      mode: normalizedMode,
-      apiKey,
-      model,
-      taskRequest,
-      planningPayload,
-      previousSession,
-      clarificationHistory,
-    });
-  }
   return createGeminiGuidancePlan({
     mode: normalizedMode,
     apiKey,
@@ -1422,60 +1405,6 @@ async function createGeminiGuidancePlan({
   return validateGuidancePlan(plan, taskRequest, mode);
 }
 
-async function createOpenAiGuidancePlan({
-  mode,
-  apiKey,
-  model,
-  taskRequest,
-  planningPayload,
-  previousSession,
-  clarificationHistory,
-}) {
-  const promptLines = guidancePlannerPromptLines(mode);
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      instructions: promptLines.join(" "),
-      input: JSON.stringify(
-        guidancePlannerInput({
-          mode,
-          taskRequest,
-          previousSession,
-          clarificationHistory,
-          planningPayload,
-        }),
-      ),
-      text: {
-        format: {
-          type: "json_schema",
-          name: "guidance_plan",
-          strict: true,
-          schema: openAiGuidancePlanSchema(mode),
-        },
-      },
-      max_output_tokens: 8192,
-    }),
-  });
-
-  const data = await response.json().catch(() => null);
-  if (!response.ok)
-    throw new Error(
-      data?.error?.message ||
-        `Gemini request failed with HTTP ${response.status}.`,
-    );
-
-  const rawText = extractOpenAiResponseText(data);
-  if (!rawText) throw new Error("Model returned no guidance plan text.");
-
-  const plan = parseModelJson(rawText, "Gemini");
-  return validateGuidancePlan(plan, taskRequest, mode);
-}
-
 function throwIfGeminiResponseWasTruncated(data, rawText) {
   const truncated = (data?.candidates || []).some(
     (candidate) => candidate.finishReason === "MAX_TOKENS",
@@ -1580,17 +1509,6 @@ function extractResponseText(response) {
   for (const candidate of response?.candidates || []) {
     for (const part of candidate.content?.parts || []) {
       if (typeof part.text === "string") chunks.push(part.text);
-    }
-  }
-  return chunks.join("").trim();
-}
-
-function extractOpenAiResponseText(response) {
-  if (typeof response?.output_text === "string") return response.output_text;
-  const chunks = [];
-  for (const item of response?.output || []) {
-    for (const content of item.content || []) {
-      if (typeof content.text === "string") chunks.push(content.text);
     }
   }
   return chunks.join("").trim();
@@ -1856,102 +1774,6 @@ function guidancePlanSchema(mode = GUIDANCE_PLAN_MODES.INITIAL) {
                   ],
                 },
                 value: optionalString,
-              },
-            },
-          },
-        },
-      },
-    },
-  };
-}
-
-function openAiGuidancePlanSchema(mode = GUIDANCE_PLAN_MODES.INITIAL) {
-  const maxSteps = maxStepsForGuidancePlanMode(normalizeGuidancePlanMode(mode));
-  const stringField = { type: "string" };
-  const targetSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: [
-      "snapshotId",
-      "kind",
-      "role",
-      "label",
-      "text",
-      "selector",
-      "href",
-      "name",
-      "type",
-      "placeholder",
-    ],
-    properties: {
-      snapshotId: stringField,
-      kind: stringField,
-      role: stringField,
-      label: stringField,
-      text: stringField,
-      selector: stringField,
-      href: stringField,
-      name: stringField,
-      type: stringField,
-      placeholder: stringField,
-    },
-  };
-  return {
-    type: "object",
-    additionalProperties: false,
-    required: [
-      "status",
-      "question",
-      "clarifiedTaskRequest",
-      "summary",
-      "assumptions",
-      "steps",
-    ],
-    properties: {
-      status: { type: "string", enum: ["needsClarification", "ready"] },
-      question: stringField,
-      clarifiedTaskRequest: stringField,
-      summary: stringField,
-      assumptions: { type: "array", maxItems: 3, items: stringField },
-      steps: {
-        type: "array",
-        minItems: 0,
-        maxItems: maxSteps,
-        items: {
-          type: "object",
-          additionalProperties: false,
-          required: [
-            "id",
-            "title",
-            "instruction",
-            "target",
-            "completion",
-            "risk",
-          ],
-          properties: {
-            id: stringField,
-            title: stringField,
-            instruction: stringField,
-            risk: { type: "string", enum: ["low", "medium", "high"] },
-            target: targetSchema,
-            completion: {
-              type: "object",
-              additionalProperties: false,
-              required: ["type", "value"],
-              properties: {
-                type: {
-                  type: "string",
-                  enum: [
-                    "manual",
-                    "click",
-                    "inputChanged",
-                    "inputValueEquals",
-                    "checked",
-                    "urlChanged",
-                    "dialogAppears",
-                  ],
-                },
-                value: stringField,
               },
             },
           },
