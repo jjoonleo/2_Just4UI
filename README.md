@@ -14,6 +14,14 @@ Chrome extension prototype with two assistance modes for the current browser pag
 
 This mode uses the PersonaLens simplify flow. The extension injects `content.js`, extracts a visible DOM summary, asks Gemini for a reconstruction plan, and applies the result back to the original page with `APPLY_ACTIONS`. The regenerated UI reuses existing page elements, enlarges and reorganizes important content, and hides clutter. Click **Reset simplified page** to restore the original page structure.
 
+<p align="center">
+  <img src="figures/uiworkflow.png" alt="UI workflow" width="400">
+</p>
+<p align="center">
+  <img src="figures/firstuidemo.gif" alt="UI demo" width="400">
+</p>
+
+
 ## 2. Guided Task Mode
 
 1. Open a normal `http://` or `https://` page.
