@@ -1,4 +1,9 @@
 // @ts-nocheck
+import {
+  preparePlanningPayloadForProvider,
+  validateGuideOnlyPolicy,
+} from "../../domain/guidance-contract";
+
 export {};
 
 const SESSION_STORAGE_KEY = "bridgeGuidanceSessions";
@@ -1243,12 +1248,13 @@ async function createGuidancePlan({
   clarificationHistory = [],
 }) {
   const normalizedMode = normalizeGuidancePlanMode(mode);
+  const safePlanningPayload = preparePlanningPayloadForProvider(planningPayload);
   if (provider !== "backend") throw new Error("Only Backend Proxy is supported.");
   return createBackendGuidancePlan({
     mode: normalizedMode,
     backendBaseUrl,
     taskRequest,
-    planningPayload,
+    planningPayload: safePlanningPayload,
     previousSession,
     clarificationHistory,
   });
@@ -1294,7 +1300,7 @@ async function createBackendGuidancePlan({
       data?.error || `Backend Proxy request failed with HTTP ${response.status}.`,
     );
   }
-  return validateGuidancePlan(data, taskRequest, mode);
+  return validateGuideOnlyPolicy(validateGuidancePlan(data, taskRequest, mode));
 }
 
 function normalizeBackendBaseUrl(baseUrl) {

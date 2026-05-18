@@ -64,7 +64,10 @@ Chrome blocks extensions from injecting scripts into internal pages such as `chr
 npm run typecheck
 npm test
 npm run build
+npm run smoke:chrome -- --dry-run
 ```
+
+For browser-facing changes, use the development-only Chrome/CDP smoke workflow in `docs/chrome-cdp-smoke-workflow.md`.
 
 ## Architecture
 
