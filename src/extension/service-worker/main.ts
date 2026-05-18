@@ -1,4 +1,8 @@
 // @ts-nocheck
+import {
+  preparePlanningPayloadForProvider,
+  validateGuideOnlyPolicy,
+} from "../../domain/guidance-contract";
 import { getProviderConfig, normalizeProviderId } from "../../shared/provider-registry";
 import { createProviderPlan } from "../../providers/provider";
 
@@ -1235,16 +1239,17 @@ async function createGuidancePlan({
   clarificationHistory = [],
 }) {
   const normalizedMode = normalizeGuidancePlanMode(mode);
+  const safePlanningPayload = preparePlanningPayloadForProvider(planningPayload);
   const plan = await createProviderPlan({
     provider,
     mode: normalizedMode,
     backendBaseUrl,
     taskRequest,
-    planningPayload,
+    planningPayload: safePlanningPayload,
     previousSession,
     clarificationHistory,
   });
-  return validateGuidancePlan(plan, taskRequest, normalizedMode);
+  return validateGuideOnlyPolicy(validateGuidancePlan(plan, taskRequest, normalizedMode));
 }
 
 function normalizeGuidancePlanMode(mode) {

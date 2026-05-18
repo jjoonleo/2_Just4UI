@@ -229,6 +229,8 @@ node --check dist/backend/server.cjs
 
 Manual Chrome validation should still use normal `http://` or `https://` pages. Chrome blocks injection into internal pages such as `chrome://extensions`, the Chrome Web Store, and some browser-owned pages.
 
+For repeatable browser-facing QA, use `docs/chrome-cdp-smoke-workflow.md`. CDP may be used as a development harness, but it is not a product runtime dependency.
+
 ## Refactor Sequence For `service-worker/main.ts`
 
 `src/extension/service-worker/main.ts` is intentionally still the current orchestration source. Shrink it in small vertical slices:
