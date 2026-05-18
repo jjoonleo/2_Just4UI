@@ -8,7 +8,7 @@ Chrome extension prototype with two assistance modes for the current browser pag
 ## Team Members
 - Tai Inui @WasedaUniv (taiinui556@suou.waseda.jp)
 - Euntaek Jeong @KoreaUniv (05temtxi21@gmail.com)
-- Joonwon Yi @YonseiUniv (louisyi1123@gmail.com)
+- Joonwon Yi @YonseiUniv (louisyi1123@gmail.com) 
 - Park Ejun @KoreaUniv (jjoonleo@gmail.com)
 
 ## 1. UI Regeneration
