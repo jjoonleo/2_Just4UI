@@ -70,6 +70,10 @@ Decision: the extension-side provider path is `Backend Proxy` only. Codex or any
 
 The side panel should collect only the backend URL and task request. The extension may preserve `bridgeModelProvider=backend` for compatibility with old storage, but it should normalize any older direct-provider values to the backend path.
 
+Decision: extension-side Backend Proxy metadata lives in `src/shared/provider-registry.ts`. Side panel UI and service worker orchestration should read the provider id, display label, default backend URL, default model, storage keys, and credential requirement from that registry instead of duplicating provider constants.
+
+Decision: the service worker calls the plan-creation boundary in `src/providers/provider.ts`. The Backend Proxy adapter in `src/providers/backend-provider.ts` owns backend URL normalization, `/guidance-plan` request construction, JSON response extraction, and backend error formatting. The service worker remains responsible for planner mode selection, Page Snapshot extraction, Planning Payload creation, Session State, and local Plan Contract validation.
+
 ## Backend Proxy Path
 
 For release-oriented work, prefer a backend proxy:
@@ -251,7 +255,7 @@ Every provider path must preserve these rules:
 ## Implementation Order
 
 1. Keep `src/extension/service-worker/main.ts` as the session orchestrator while factoring backend-provider and Plan Contract behavior into shared TypeScript modules.
-2. Extract backend provider metadata into one small provider registry if another backend provider is added.
+2. Keep extension-side provider metadata in `src/shared/provider-registry.ts`; add new extension provider entries only if Bridge intentionally reintroduces extension-side providers.
 3. Add provider-focused tests around backend URL handling, request construction, response parsing, and backend error messages.
 4. Consider additional backend adapters only behind the proxy path.
 
