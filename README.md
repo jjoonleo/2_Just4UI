@@ -69,6 +69,8 @@ npm run build
 npm run smoke:chrome
 ```
 
+`npm run smoke:chrome` is opt-in development QA. It launches a temporary Chrome profile, loads the unpacked extension, serves local fixture pages, and checks core Guided Task Mode browser behavior through CDP. For the full workflow, use `docs/chrome-cdp-smoke-workflow.md`.
+
 ## Architecture
 
 Bridge source is organized by Chrome extension runtime boundary under `src/`. See `docs/chrome-extension-architecture.md` for the folder map, dependency rules, and the expected refactor path for the MV3 service worker.

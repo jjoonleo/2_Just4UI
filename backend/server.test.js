@@ -73,6 +73,63 @@ test("handleGuidancePlanPayload requires BRIDGE_CODEX_MODEL for codex", async ()
   );
 });
 
+test("handleGuidancePlanPayload forwards only redacted planning payload URLs", async () => {
+  let forwardedPayload;
+  await handleGuidancePlanPayload(basePayload(), {
+    env: {
+      BRIDGE_BACKEND_PROVIDER: "codex",
+      BRIDGE_CODEX_MODEL: "test-codex-model",
+    },
+    callProvider: async (payload) => {
+      forwardedPayload = payload;
+      return "{}";
+    },
+  });
+
+  assert.equal(
+    forwardedPayload.planningPayload.page.url,
+    "https://example.com/orders",
+  );
+  assert.equal(
+    forwardedPayload.planningPayload.page.canonicalUrl,
+    "https://example.com/orders",
+  );
+  assert.equal(
+    forwardedPayload.planningPayload.links[0].href,
+    "https://example.com/help",
+  );
+  assert.equal(
+    forwardedPayload.planningPayload.interactiveElements[0].href,
+    "/checkout",
+  );
+});
+
+test("handleGuidancePlanPayload rejects form values before calling provider", async () => {
+  let providerCalled = false;
+  await assert.rejects(
+    () =>
+      handleGuidancePlanPayload(
+        basePayload({
+          planningPayload: {
+            forms: [{ label: "Email", value: "ejun@example.com" }],
+          },
+        }),
+        {
+          env: {
+            BRIDGE_BACKEND_PROVIDER: "codex",
+            BRIDGE_CODEX_MODEL: "test-codex-model",
+          },
+          callProvider: async () => {
+            providerCalled = true;
+            return "{}";
+          },
+        },
+      ),
+    /form values/i,
+  );
+  assert.equal(providerCalled, false);
+});
+
 test("parseProviderPlan maps invalid provider JSON to a 502 error", () => {
   assert.throws(() => parseProviderPlan("not json"), (error) => {
     assert.equal(error.statusCode, 502);

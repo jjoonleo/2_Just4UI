@@ -2,9 +2,9 @@ import {
   BACKEND_PROVIDER_ID,
   getProviderConfig,
   normalizeProviderId,
-  PROVIDER_DEPRECATED_STORAGE_KEYS,
   type ProviderId
-} from "../../providers/provider-registry";
+} from "../../shared/provider-registry";
+import { BRIDGE_STORAGE_KEYS } from "../../shared/storage-keys";
 
 type Provider = ProviderId;
 type StoredSettings = Record<string, string | undefined>;
@@ -58,11 +58,14 @@ const autoRefreshButton = getElement<HTMLButtonElement>("autoRefreshButton");
 const endGuideButton = getElement<HTMLButtonElement>("endGuideButton");
 let currentAutoRefreshPaused = false;
 
-const GUIDE_STORAGE_KEYS = {
-  provider: "bridgeModelProvider",
-  backendBaseUrl: "bridgeBackendBaseUrl"
-};
-const BACKEND_PROVIDER_CONFIG = getProviderConfig(BACKEND_PROVIDER_ID);
+const DEPRECATED_STORAGE_KEYS = [
+  "bridgeGeminiApiKey",
+  "bridgeGeminiModel",
+  "bridgeOpenAiApiKey",
+  "bridgeOpenAiModel"
+];
+
+const BACKEND_PROVIDER = getProviderConfig(BACKEND_PROVIDER_ID);
 
 let clarificationState: ClarificationState | null = null;
 
@@ -114,21 +117,24 @@ function queryElement<T extends Element>(selector: string): T {
 }
 
 async function restoreGuideSettings(): Promise<void> {
-  const stored = await chrome.storage.local.get(Object.values(GUIDE_STORAGE_KEYS)) as StoredSettings;
-  const provider = normalizeProvider(stored[GUIDE_STORAGE_KEYS.provider]);
-  if (stored[GUIDE_STORAGE_KEYS.provider] !== provider) {
-    await chrome.storage.local.set({ [GUIDE_STORAGE_KEYS.provider]: provider });
+  const stored = await chrome.storage.local.get([
+    BRIDGE_STORAGE_KEYS.MODEL_PROVIDER,
+    BACKEND_PROVIDER.backendBaseUrlStorageKey
+  ]) as StoredSettings;
+  const provider = normalizeProvider(stored[BRIDGE_STORAGE_KEYS.MODEL_PROVIDER]);
+  if (stored[BRIDGE_STORAGE_KEYS.MODEL_PROVIDER] !== provider) {
+    await chrome.storage.local.set({ [BRIDGE_STORAGE_KEYS.MODEL_PROVIDER]: provider });
   }
-  await chrome.storage.local.remove([...PROVIDER_DEPRECATED_STORAGE_KEYS]);
+  await chrome.storage.local.remove(DEPRECATED_STORAGE_KEYS);
   applyProviderFields(stored);
 }
 
 async function resetBackendUrl(): Promise<void> {
   await chrome.storage.local.set({
-    [BACKEND_PROVIDER_CONFIG.backendBaseUrlStorageKey]: BACKEND_PROVIDER_CONFIG.defaultBaseUrl,
-    [GUIDE_STORAGE_KEYS.provider]: BACKEND_PROVIDER_ID
+    [BACKEND_PROVIDER.backendBaseUrlStorageKey]: BACKEND_PROVIDER.defaultBaseUrl,
+    [BACKEND_PROVIDER.modelProviderStorageKey]: BACKEND_PROVIDER.id
   });
-  backendUrlInput.value = BACKEND_PROVIDER_CONFIG.defaultBaseUrl;
+  backendUrlInput.value = BACKEND_PROVIDER.defaultBaseUrl;
   setStatus("Backend URL reset.");
 }
 
@@ -182,15 +188,15 @@ async function toggleAutoRefresh(): Promise<void> {
 function applyProviderFields(stored: StoredSettings = {}): void {
   backendUrlField.hidden = false;
   resetUrlButton.textContent = "Reset URL";
-  backendUrlInput.placeholder = BACKEND_PROVIDER_CONFIG.defaultBaseUrl;
+  backendUrlInput.placeholder = BACKEND_PROVIDER.backendUrlPlaceholder;
   backendUrlInput.value =
-    stored[BACKEND_PROVIDER_CONFIG.backendBaseUrlStorageKey] ||
-    BACKEND_PROVIDER_CONFIG.defaultBaseUrl;
-  modelInput.value = BACKEND_PROVIDER_CONFIG.defaultModel;
+    stored[BACKEND_PROVIDER.backendBaseUrlStorageKey] ||
+    BACKEND_PROVIDER.defaultBaseUrl;
+  modelInput.value = BACKEND_PROVIDER.defaultModel;
 }
 
 function getSelectedProvider(): Provider {
-  return BACKEND_PROVIDER_ID;
+  return BACKEND_PROVIDER.id;
 }
 
 function normalizeProvider(provider: unknown): Provider {
@@ -221,7 +227,7 @@ async function startGuidedTaskMode(): Promise<void> {
 
   try {
     const settings: Record<string, string> = {
-      [GUIDE_STORAGE_KEYS.provider]: provider,
+      [providerConfig.modelProviderStorageKey]: provider,
       [providerConfig.backendBaseUrlStorageKey]: backendBaseUrl
     };
     await chrome.storage.local.set(settings);

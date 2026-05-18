@@ -1,25 +1,46 @@
 # Chrome/CDP Smoke Workflow
 
-This workflow is for developer QA of the unpacked Bridge extension. It checks that Guided Task Mode works on normal browser pages while preserving Guide-Only Assistance.
+This is a development-only QA workflow for Bridge Guided Task Mode. It uses normal Chrome extension loading and may use Chrome DevTools Protocol (CDP) or browser automation to observe the browser during development, but CDP is not a product runtime dependency.
 
-Chrome DevTools Protocol (CDP) is optional and development-only. Bridge must not require CDP as a product runtime dependency, and CDP automation must not become a replacement for Chrome extension APIs, content scripts, or user-controlled page actions.
+Bridge runtime behavior stays inside the MV3 extension, the side panel, the service worker, content-script injection, and the optional Backend Proxy. A smoke runner may open pages, collect console errors, and inspect rendered UI, but it must not click, type, submit, purchase, delete, confirm, or otherwise perform page actions as product behavior for the user.
 
-## Prerequisites
+## Build And Load
 
-Build before loading or reloading the extension:
+1. Run `npm install` if dependencies are not installed.
+2. Run `npm run build`.
+3. Open `chrome://extensions`.
+4. Enable **Developer mode**.
+5. Click **Load unpacked**.
+6. Select the Bridge checkout root. The primary local demo checkout is `/Users/ejunpark/Documents/brigde_hakerthon`; when validating a worktree, select that worktree root instead.
+7. Open a normal `http://` or `https://` page before starting a guide.
 
-```bash
-npm install
-npm run build
-```
+Do not use `chrome://extensions`, Chrome Web Store pages, browser settings pages, or other browser-owned pages as positive overlay-rendering cases. Chrome blocks extension injection on those pages, so they are only useful for unsupported page checks.
 
-The automated development smoke runner does the build, starts a local test page, starts a fake Backend Proxy, launches a temporary Chrome profile with the unpacked extension, and runs the core checks:
+## Optional CDP Harness
+
+Use CDP only as a development harness around Chrome. A harness may:
+
+- Open a normal HTTP/HTTPS test page.
+- Verify the extension action can open the side panel.
+- Read target page, side panel, and service worker console errors where Chrome exposes them.
+- Inspect whether Bridge overlay nodes render on the original page.
+- Check target highlight placement by comparing the highlight box with the intended page target.
+- Drive navigation to another normal page or activate another tab to verify Plan Refresh behavior.
+- Visit an unsupported page to verify the session pauses cleanly.
+
+A harness must not become required for normal users. The extension must continue to work through Chrome extension APIs without a remote debugging port.
+
+## Automated Smoke Runner
+
+Run the opt-in smoke runner after source changes:
 
 ```bash
 npm run smoke:chrome
 ```
 
-The runner uses Chrome for Testing when possible and downloads it into `~/.cache/bridge/chrome-for-testing` when no compatible local browser is available. Recent branded Chrome builds may ignore command-line unpacked-extension loading, so use Chrome for Testing or Chromium for automated runs.
+The script runs `npm run build`, starts a temporary Chrome profile with this repository loaded as an unpacked extension, serves local HTTP fixture pages, starts a deterministic stub backend, and connects to Chrome over CDP. It does not call Codex or any remote model provider.
+
+The runner uses Chrome for Testing when possible and downloads it into `~/.cache/bridge/chrome-for-testing` when no compatible local browser is available. Recent branded Chrome builds may ignore command-line unpacked-extension loading, so prefer Chrome for Testing or Chromium for automated runs.
 
 Useful runner options:
 
@@ -28,98 +49,80 @@ npm run smoke:chrome -- --headless
 npm run smoke:chrome -- --keep-open
 npm run smoke:chrome -- --chrome-path="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 npm run smoke:chrome -- --no-browser-download
+npm run smoke:chrome -- --skip-build
 npm run smoke:chrome -- --list-checks
 ```
 
-Use a regular `http://` or `https://` page for smoke checks. Chrome blocks extension injection on internal pages such as `chrome://extensions`, the Chrome Web Store, and some browser-owned pages.
+The automated runner checks:
 
-For provider-backed happy-path checks, start the local backend proxy:
+- The unpacked extension exposes a service worker and side panel page.
+- A normal HTTP fixture page can start Guided Task Mode through the existing extension message contract.
+- Missing backend behavior fails clearly without leaving a stale overlay.
+- The stub backend receives an `initial` guidance request and later a `refresh` guidance request.
+- The overlay root and target highlight render on the original page.
+- The highlight contains the intended Page Target on the initial page and after navigation refresh.
+- Navigation on the Session Host Tab refreshes guidance with fresh page evidence.
+- Navigation to a Chrome-owned page pauses the session cleanly.
+- Console errors are absent from the target page, side panel page, and service worker when those CDP targets are available.
 
-```bash
-BRIDGE_BACKEND_PROVIDER=codex \
-BRIDGE_CODEX_MODEL=<codex-model> \
-BRIDGE_EXTENSION_ORIGIN=chrome-extension://<extension-id> \
-node dist/backend/server.cjs
-```
+Keep this script opt-in. It launches a real browser and should not run as part of ordinary `npm test` unless a future CI environment explicitly supports Chrome extension smoke checks.
 
-For missing-backend checks, leave the backend stopped or set the side panel backend URL to an unused local port.
+## Manual Smoke Checks
 
-## Load The Unpacked Extension
+### Side Panel
 
-1. Open `chrome://extensions`.
-2. Enable **Developer mode**.
-3. Click **Load unpacked**.
-4. Select the repository root for the checkout being tested. The primary local checkout is `/Users/ejunpark/Documents/brigde_hakerthon`.
-5. After rebuilding, click the extension's reload button on `chrome://extensions`.
+1. Click the Bridge extension action.
+2. Confirm the side panel opens.
+3. Confirm the setup controls show the Backend Proxy URL field and task request field.
+4. Start without a reachable backend:
+   - Leave the backend URL empty, use an invalid backend URL, or stop the backend.
+   - Verify missing backend or backend connection behavior is clear.
+5. Confirm the Session Dashboard updates when a guide starts, refreshes, pauses, or ends.
 
-Expected result: Chrome loads Bridge from the repo root and reports no manifest or service-worker registration errors.
+### Overlay And Target Highlight
 
-## Open The Side Panel
+1. Open a normal HTTP/HTTPS page with visible buttons, links, or inputs.
+2. Start a guide with a simple Task Request such as `Find the return policy`.
+3. Confirm the overlay renders on the original page.
+4. Confirm the target highlight is near the intended Page Target and does not block the target.
+5. Confirm the guide explains and highlights only. It must not click the target, must not type into fields, and must not submit forms.
+6. Confirm page controls still respond to the user's own actions.
 
-1. Open a supported `http://` or `https://` page.
-2. Click the Bridge extension action in Chrome's toolbar.
-3. Confirm the side panel opens.
+### Navigation And Active-Tab Refresh
 
-Expected result: the Side Panel shows the Backend Proxy URL field, Task Request field, and Guided Task Mode controls. If a Guidance Session is already active, the Session Dashboard should show the current Session Status and Guide Activity instead of losing session state.
+1. Start a guide on a normal page.
+2. Navigate the Session Host Tab or activate another normal tab in the same Session Window.
+3. Confirm Bridge starts Guide Activity for refresh in progress.
+4. Confirm the stale overlay is removed during refresh and the generated guide list is hidden while refresh is in progress.
+5. Confirm refreshed guidance renders on the new page or active-tab host after the new Page Snapshot and Guidance Plan are ready.
+6. If a soft page-state refresh fails, confirm the previous guide is restored when possible and the Session Dashboard reports the issue.
+7. Use **Pause auto refresh** and confirm Page State Change refresh pauses for the current Guidance Session, then use **Resume auto refresh** and confirm refresh can resume.
 
-## Missing Backend Behavior
+### Unsupported Page Pause
 
-1. Stop the backend proxy or enter an unused backend URL, such as `http://localhost:9`.
-2. Enter a Task Request.
-3. Start Guided Task Mode.
+1. Start a guide on a supported HTTP/HTTPS page.
+2. Move the Session Host Tab to an unsupported page, such as a Chrome-owned page.
+3. Confirm Bridge removes any stale overlay.
+4. Confirm the session becomes a Paused Guidance Session instead of silently ending.
+5. Return to a supported HTTP/HTTPS page or activate a supported tab in the same Session Window and confirm the guide can refresh or continue.
 
-Expected result: the Side Panel reports the provider/backend error clearly. Bridge should not save a new failed Guidance Session, should not inject a stale overlay, and should not ask the page to click, type, submit, purchase, delete, or confirm anything.
+### Console Errors
 
-## Overlay Rendering
+For each smoke run, capture console errors where feasible from:
 
-1. Start the backend proxy with valid local configuration.
-2. Open a supported page with visible links, buttons, or form fields.
-3. Enter a Task Request that can be answered from the visible page, such as `Find the return policy`.
-4. Start Guided Task Mode.
+- The target page.
+- The side panel extension page.
+- The MV3 service worker.
 
-Expected result: Bridge creates a Guidance Plan, injects one guide overlay into the original page, and keeps the page's own interface intact. The overlay should explain the current Guidance Step and should not block the primary Page Target.
+Unexpected console errors should fail the smoke run unless they are known browser noise and recorded with a reason.
 
-## Target Highlight Placement
+## Pass Criteria
 
-1. With a guide active, inspect the highlighted Page Target.
-2. Scroll if needed and compare the highlight with the intended target text, label, role, or link destination.
-3. Advance only after the user manually performs the page action.
-
-Expected result: the highlight points to the intended Page Target. Bridge may highlight, scroll, explain, and observe progress, but the user performs every page action. The guide must not click, type, submit, purchase, delete, confirm, or choose values for the user.
-
-## Navigation And Active-Tab Refresh
-
-1. Start a guide on a supported page.
-2. Manually navigate through the highlighted Page Target or switch to another supported tab in the same Chrome window.
-3. Watch the Side Panel while the refresh is in progress.
-
-Expected result: Bridge removes the stale page overlay during Plan Refresh, shows Guide Activity in the Side Panel, collects a fresh Page Snapshot, and renders refreshed guidance on the current Session Host Tab. Completed Step History should remain intact.
-
-## Unsupported-Page Pause
-
-1. Start a guide on a supported page.
-2. Switch the same Chrome window to an unsupported page such as `chrome://extensions`.
-
-Expected result: Bridge removes the stale overlay and turns the session into a Paused Guidance Session. The Side Panel should explain that the active page is unsupported. Returning to a supported page in the same Session Window should allow the guide to refresh instead of leaving the old unsupported-page state stuck.
-
-## Development-Only CDP
-
-CDP can help observe the smoke workflow, especially console errors from the page, side panel, or service worker. It should be used only as a development harness.
-
-One local pattern is to run a separate Chrome profile with a debugging port:
-
-```bash
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/tmp/bridge-cdp-profile
-```
-
-Then use browser automation or DevTools against `http://127.0.0.1:9222` to:
-
-- Open supported pages for smoke checks.
-- Observe console errors and failed network requests.
-- Confirm the overlay appears only on the current Session Host Tab.
-- Confirm unsupported pages do not retain stale overlays.
-- Confirm Bridge never performs page actions for the user.
-
-Do not treat a passing CDP run as a product dependency. Normal users should only need Chrome's extension runtime, the unpacked extension, and the configured Backend Proxy.
+- The unpacked extension loads from the repository root after `npm run build`.
+- The side panel opens from the extension action.
+- Missing backend and unsupported page cases are clear to the user.
+- Overlay rendering and target highlight placement work on normal HTTP/HTTPS pages.
+- Navigation, active-tab changes, and Page State Change refresh do not leave stale overlays behind.
+- **Pause auto refresh** affects only the current Guidance Session.
+- Bridge never performs page actions for the user.
+- CDP/browser automation remains development-only and out of production extension behavior.

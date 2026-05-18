@@ -115,6 +115,11 @@ export function redactPlanningPayloadUrls<T>(value: T): T {
   return redactUrlFields(structuredCloneCompatible(value)) as T;
 }
 
+export function preparePlanningPayloadForProvider<T>(value: T): T {
+  assertNoFormValues(value);
+  return redactPlanningPayloadUrls(value);
+}
+
 export function validateGuidancePlan(
   plan: unknown,
   fallbackTaskRequest = "",
@@ -175,37 +180,64 @@ export function validateGuidancePlan(
   };
 }
 
-export function validateGuideOnlyPolicy(
-  plan: GuidancePlanDecision
-): GuidancePlanDecision {
-  if (plan.status === "needsClarification") return plan;
+export function validateGuideOnlyPolicy<T extends GuidancePlanDecision>(
+  decision: T
+): T {
+  if (decision.status === "needsClarification") return decision;
 
-  return {
-    ...plan,
-    steps: plan.steps.map((step, index) => validateGuideOnlyStep(step, index))
-  };
+  const steps = decision.steps.map((step, index) => {
+    const text = guideOnlyPolicyText(step);
+    const risk =
+      step.risk === "high" || !containsHighRiskAction(text)
+        ? step.risk
+        : "high";
+
+    if (containsExtensionSidePageAction(step.instruction)) {
+      throw new Error(
+        `Guide-Only policy violation: step ${index + 1} asks Bridge to perform a page action.`
+      );
+    }
+
+    return risk === step.risk ? step : { ...step, risk };
+  });
+
+  return { ...decision, steps };
 }
 
-function validateGuideOnlyStep(step: GuidanceStep, index: number): GuidanceStep {
-  const policyText = [
+function guideOnlyPolicyText(step: GuidanceStep): string {
+  return [
     step.title,
     step.instruction,
-    step.target?.label,
-    step.target?.text,
-    step.target?.placeholder
-  ].join(" ");
+    step.target.label,
+    step.target.text,
+    step.target.name,
+    step.target.placeholder,
+    step.target.href
+  ]
+    .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+    .join(" ");
+}
 
-  if (EXTENSION_ACTOR_PATTERN.test(policyText)) {
-    throw new Error(
-      `Guide-Only policy violation in step ${index + 1}: the extension must not perform page actions for the user.`
-    );
-  }
+function containsHighRiskAction(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
 
-  if (step.risk !== "high" && HIGH_RISK_ACTION_PATTERN.test(policyText)) {
-    return { ...step, risk: "high" };
-  }
+  return /\b(checkout|payment|pay|purchase|buy|credit card|card number|cvv|personal information|personal info|ssn|social security|home address|address|phone number|date of birth|birth date|delete account|account deletion|delete|remove account|destructive|irreversible)\b/i.test(normalized);
+}
 
-  return step;
+function containsExtensionSidePageAction(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
+
+  const actor = String.raw`(?:bridge|the extension|extension|the guide|guide|assistant|model|ai|i|we)`;
+  const intent = String.raw`(?:will|can|should|must|may|is going to|are going to|am going to|will now|can now|should now|must now)`;
+  const action = String.raw`(?:click|type|submit|purchase|buy|delete|confirm|perform|enter|fill|select)`;
+  const actionPattern = new RegExp(
+    String.raw`\b${actor}\b[^.!?]{0,80}\b${intent}\b[^.!?]{0,80}\b${action}\b`,
+    "i"
+  );
+
+  return actionPattern.test(normalized);
 }
 
 function normalizeGuidanceStep(step: unknown, index: number): GuidanceStep {

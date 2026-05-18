@@ -14,8 +14,8 @@ await build({
 });
 
 await build({
-  entryPoints: ["src/providers/provider-registry.ts"],
-  outfile: "dist/providers/provider-registry.mjs",
+  entryPoints: ["src/shared/provider-registry.ts"],
+  outfile: "dist/shared/provider-registry.mjs",
   bundle: true,
   format: "esm",
   platform: "neutral",
@@ -26,6 +26,16 @@ await build({
 await build({
   entryPoints: ["src/providers/backend-provider.ts"],
   outfile: "dist/providers/backend-provider.mjs",
+  bundle: true,
+  format: "esm",
+  platform: "neutral",
+  target: "es2022",
+  sourcemap: true
+});
+
+await build({
+  entryPoints: ["src/providers/provider.ts"],
+  outfile: "dist/providers/provider.mjs",
   bundle: true,
   format: "esm",
   platform: "neutral",

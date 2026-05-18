@@ -1,10 +1,10 @@
 // @ts-nocheck
 import {
-  compactClarificationHistory,
-  createBackendProviderPlan
-} from "../../providers/backend-provider";
-import { validateGuideOnlyPolicy } from "../../domain/guidance-contract";
-import { getProviderConfig, normalizeProviderId } from "../../providers/provider-registry";
+  preparePlanningPayloadForProvider,
+  validateGuideOnlyPolicy,
+} from "../../domain/guidance-contract";
+import { getProviderConfig, normalizeProviderId } from "../../shared/provider-registry";
+import { createProviderPlan } from "../../providers/provider";
 
 const SESSION_STORAGE_KEY = "bridgeGuidanceSessions";
 const ACTIVITY_STORAGE_KEY = "bridgeGuidanceActivity";
@@ -1155,8 +1155,7 @@ async function getBackendBaseUrl(providerConfig) {
   const backendBaseUrl =
     stringOrNull(stored[providerConfig.backendBaseUrlStorageKey]) ||
     providerConfig.defaultBaseUrl;
-  if (!backendBaseUrl)
-    throw new Error(`${providerConfig.displayLabel} URL is missing.`);
+  if (!backendBaseUrl) throw new Error(`${providerConfig.displayLabel} URL is missing.`);
   return backendBaseUrl;
 }
 
@@ -1281,18 +1280,17 @@ async function createGuidancePlan({
   clarificationHistory = [],
 }) {
   const normalizedMode = normalizeGuidancePlanMode(mode);
-  if (provider !== "backend") throw new Error("Only Backend Proxy is supported.");
-  const providerPlan = await createBackendProviderPlan({
+  const safePlanningPayload = preparePlanningPayloadForProvider(planningPayload);
+  const plan = await createProviderPlan({
+    provider,
     mode: normalizedMode,
     backendBaseUrl,
     taskRequest,
-    planningPayload,
+    planningPayload: safePlanningPayload,
     previousSession,
     clarificationHistory,
   });
-  return validateGuideOnlyPolicy(
-    validateGuidancePlan(providerPlan, taskRequest, normalizedMode),
-  );
+  return validateGuideOnlyPolicy(validateGuidancePlan(plan, taskRequest, normalizedMode));
 }
 
 function normalizeGuidancePlanMode(mode) {
@@ -1303,6 +1301,15 @@ function normalizeGuidancePlanMode(mode) {
 
 function maxStepsForGuidancePlanMode(mode) {
   return mode === GUIDANCE_PLAN_MODES.REFRESH ? 8 : 2;
+}
+
+function compactClarificationHistory(history) {
+  return (Array.isArray(history) ? history : []).slice(-6).map((item) =>
+    compactObject({
+      question: stringOrNull(item?.question),
+      answer: stringOrNull(item?.answer),
+    }),
+  );
 }
 
 function createClarificationPayload(planDecision, history = []) {

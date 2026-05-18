@@ -5,6 +5,7 @@ import {
   assertNoFormValues,
   maxStepsForGuidancePlanMode,
   parseProviderPlan,
+  preparePlanningPayloadForProvider,
   redactPlanningPayloadUrls,
   validateGuidancePlan,
   validateGuideOnlyPolicy
@@ -36,6 +37,37 @@ test("planning payload validation rejects user-entered form values", () => {
   assert.throws(
     () =>
       assertNoFormValues({
+        forms: [{ label: "Email", value: "ejun@example.com" }]
+      }),
+    /form values/i
+  );
+});
+
+test("provider planning payload preparation rejects form values before returning a redacted payload", () => {
+  const payload = {
+    page: {
+      url: "https://example.com/orders?token=secret#receipt",
+      canonicalUrl: "https://example.com/orders?session=abc"
+    },
+    links: [{ href: "https://example.com/help?q=private#top" }],
+    interactiveElements: [
+      { href: "/checkout?cart=secret#pay", label: "Checkout" }
+    ],
+    forms: [{ label: "Email", type: "email", valueIncluded: false }]
+  };
+
+  const prepared = preparePlanningPayloadForProvider(payload);
+
+  assert.notEqual(prepared, payload);
+  assert.equal(prepared.page.url, "https://example.com/orders");
+  assert.equal(prepared.page.canonicalUrl, "https://example.com/orders");
+  assert.equal(prepared.links[0].href, "https://example.com/help");
+  assert.equal(prepared.interactiveElements[0].href, "/checkout");
+  assert.equal(payload.page.url, "https://example.com/orders?token=secret#receipt");
+
+  assert.throws(
+    () =>
+      preparePlanningPayloadForProvider({
         forms: [{ label: "Email", value: "ejun@example.com" }]
       }),
     /form values/i
@@ -76,99 +108,87 @@ test("guidance plan validation enforces mode step limits and normalizes steps", 
   assert.equal(plan.steps[0].completion.type, "click");
 });
 
-test("Guide-Only policy rejects model output that says the extension performs page actions", () => {
-  const plan = validateGuidancePlan(
-    {
-      status: "ready",
-      clarifiedTaskRequest: "Confirm the purchase",
-      summary: "Confirm the purchase.",
-      steps: [
-        {
-          title: "Confirm purchase",
-          instruction: "The extension will click the Confirm purchase button for you.",
-          target: { role: "button", text: "Confirm purchase" },
-          risk: "high"
-        }
-      ]
-    },
-    "Confirm the purchase",
-    "initial"
-  );
+test("Guide-Only policy rejects extension-side page action instructions", () => {
+  const actionInstructions = [
+    "Bridge will click the checkout button for you.",
+    "The extension will type your email into the form.",
+    "The guide will submit the form now.",
+    "AI will purchase the item for you.",
+    "The assistant will delete the selected account.",
+    "We will confirm the final step."
+  ];
 
-  assert.throws(() => validateGuideOnlyPolicy(plan), /Guide-Only/i);
+  for (const instruction of actionInstructions) {
+    const plan = validateGuidancePlan(
+      {
+        status: "ready",
+        clarifiedTaskRequest: "Buy the item",
+        summary: "Guide the user to checkout.",
+        assumptions: [],
+        steps: [
+          {
+            title: "Checkout",
+            instruction,
+            target: { role: "button", text: "Checkout" },
+            risk: "high"
+          }
+        ]
+      },
+      "Buy the item",
+      "initial"
+    );
+
+    assert.throws(() => validateGuideOnlyPolicy(plan), /Guide-Only/i);
+  }
 });
 
-test("Guide-Only policy upgrades sensitive or destructive steps to high risk", () => {
-  const plan = validateGuidancePlan(
+test("Guide-Only policy upgrades high-risk guidance for payment, deletion, and personal information", () => {
+  const cases = [
     {
-      status: "ready",
-      clarifiedTaskRequest: "Delete my account",
-      summary: "Guide the user to account deletion.",
-      steps: [
-        {
-          title: "Open account deletion",
-          instruction: "Use the Delete account button.",
-          target: { role: "button", text: "Delete account" },
-          risk: "low"
-        }
-      ]
+      task: "Pay for this item",
+      instruction: "Use the payment button when you are ready.",
+      target: { role: "button", text: "Pay now" }
     },
-    "Delete my account",
-    "initial"
-  );
-
-  const policyChecked = validateGuideOnlyPolicy(plan);
-
-  assert.equal(policyChecked.status, "ready");
-  assert.equal(policyChecked.steps[0].risk, "high");
-});
-
-test("Guide-Only policy upgrades payment steps to high risk", () => {
-  const plan = validateGuidancePlan(
     {
-      status: "ready",
-      clarifiedTaskRequest: "Pay for my order",
-      summary: "Guide the user to payment.",
-      steps: [
-        {
-          title: "Review payment",
-          instruction: "Use the Pay now button when you are ready.",
-          target: { role: "button", text: "Pay now" },
-          risk: "low"
-        }
-      ]
+      task: "Delete my account",
+      instruction: "Use the Delete account button when you are ready.",
+      target: { role: "button", text: "Delete account" }
     },
-    "Pay for my order",
-    "initial"
-  );
-
-  const policyChecked = validateGuideOnlyPolicy(plan);
-
-  assert.equal(policyChecked.status, "ready");
-  assert.equal(policyChecked.steps[0].risk, "high");
-});
-
-test("Guide-Only policy upgrades personal-information steps to high risk", () => {
-  const plan = validateGuidancePlan(
     {
-      status: "ready",
-      clarifiedTaskRequest: "Update my profile",
-      summary: "Guide the user to profile updates.",
-      steps: [
-        {
-          title: "Review contact details",
-          instruction: "Use the fields for your home address and phone number.",
-          target: { role: "textbox", label: "Home address" },
-          risk: "low"
-        }
-      ]
+      task: "Submit my profile",
+      instruction: "Use the personal information form submit button.",
+      target: { role: "button", text: "Submit personal information" }
     },
-    "Update my profile",
-    "initial"
-  );
+    {
+      task: "Update my profile",
+      instruction: "Use the fields for your home address and phone number.",
+      target: { role: "textbox", label: "Home address" }
+    }
+  ];
 
-  const policyChecked = validateGuideOnlyPolicy(plan);
+  for (const item of cases) {
+    const plan = validateGuidancePlan(
+      {
+        status: "ready",
+        clarifiedTaskRequest: item.task,
+        summary: "Guide the user to the sensitive control.",
+        assumptions: [],
+        steps: [
+          {
+            title: "Find the sensitive control",
+            instruction: item.instruction,
+            target: item.target,
+            risk: "low"
+          }
+        ]
+      },
+      item.task,
+      "initial"
+    );
 
-  assert.equal(policyChecked.status, "ready");
-  assert.equal(policyChecked.steps[0].risk, "high");
+    const policySafePlan = validateGuideOnlyPolicy(plan);
+
+    assert.equal(policySafePlan.steps[0].risk, "high");
+    assert.equal(plan.steps[0].risk, "low");
+  }
 });
