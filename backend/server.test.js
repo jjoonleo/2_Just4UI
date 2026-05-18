@@ -9,7 +9,7 @@ const {
   handleGuidancePlanPayload,
   parseProviderPlan,
   redactPlanningPayloadUrls,
-} = require("./server");
+} = require("../dist/backend/server.cjs");
 
 function basePayload(overrides = {}) {
   return {

@@ -1,8 +1,28 @@
-const http = require("node:http");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const crypto = require("node:crypto");
+import type { IncomingMessage, Server, ServerResponse } from "node:http";
+
+const http = require("node:http") as typeof import("node:http");
+const fs = require("node:fs") as typeof import("node:fs");
+const os = require("node:os") as typeof import("node:os");
+const path = require("node:path") as typeof import("node:path");
+const nodeCrypto = require("node:crypto") as typeof import("node:crypto");
+
+type Env = NodeJS.ProcessEnv;
+type JsonRecord = Record<string, any>;
+type ProviderContext = { env: Env; requestId?: string | undefined };
+type CallProvider = (
+  payload: JsonRecord,
+  context: ProviderContext,
+) => Promise<unknown>;
+type BridgeBackendServerOptions = {
+  env?: Env;
+  callProvider?: CallProvider;
+  maxRequestBytes?: number;
+};
+type BridgeHttpError = Error & {
+  statusCode: number;
+  code: string;
+  exposeMessage: string;
+};
 
 const DEFAULT_PORT = 8787;
 const DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
@@ -22,7 +42,7 @@ const SENSITIVE_VALUE_KEYS = new Set([
 ]);
 const URL_KEYS = new Set(["url", "canonicalUrl", "href"]);
 
-async function main() {
+async function main(): Promise<void> {
   const server = createBridgeBackendServer();
   const port = Number(process.env.BRIDGE_BACKEND_PORT || DEFAULT_PORT);
   server.listen(port, () => {
@@ -38,10 +58,10 @@ function createBridgeBackendServer({
   env = process.env,
   callProvider = callConfiguredProvider,
   maxRequestBytes = MAX_REQUEST_BYTES,
-} = {}) {
-  return http.createServer(async (req, res) => {
+}: BridgeBackendServerOptions = {}): Server {
+  return http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const startedAt = Date.now();
-    const requestId = crypto.randomUUID();
+    const requestId = nodeCrypto.randomUUID();
 
     try {
       if (req.method === "OPTIONS") {
@@ -85,7 +105,8 @@ function createBridgeBackendServer({
         latencyMs: Date.now() - startedAt,
       });
       writeJson(res, 200, result);
-    } catch (error) {
+    } catch (caught) {
+      const error = caught as Partial<BridgeHttpError> & Error;
       const status = error.statusCode || 500;
       logMetadata({
         event: "guidance_plan_failure",
@@ -103,7 +124,10 @@ function createBridgeBackendServer({
   });
 }
 
-async function handleGuidancePlanPayload(payload, { env, callProvider, requestId }) {
+async function handleGuidancePlanPayload(
+  payload: any,
+  { env, callProvider, requestId }: { env: Env; callProvider: CallProvider; requestId?: string },
+): Promise<any> {
   validateGuidancePlanRequest(payload);
   const provider = providerFromEnv(env);
   if (provider !== "codex") {
@@ -139,11 +163,17 @@ async function handleGuidancePlanPayload(payload, { env, callProvider, requestId
   return parseProviderPlan(providerText);
 }
 
-async function callConfiguredProvider(payload, { env }) {
+async function callConfiguredProvider(
+  payload: JsonRecord,
+  { env }: ProviderContext,
+): Promise<unknown> {
   return callCodexProvider(payload, { env });
 }
 
-async function callCodexProvider(payload, { env }) {
+async function callCodexProvider(
+  payload: JsonRecord,
+  { env }: ProviderContext,
+): Promise<string> {
   const model = modelFromEnv(env);
   const credentials = readCodexCredentials(env);
   const baseUrl = (env.BRIDGE_CODEX_BASE_URL || DEFAULT_CODEX_BASE_URL).replace(
@@ -188,7 +218,7 @@ async function callCodexProvider(payload, { env }) {
   return text;
 }
 
-function validateGuidancePlanRequest(payload) {
+function validateGuidancePlanRequest(payload: any): void {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw httpError(400, "Request body must be a JSON object.", "invalid_request");
   }
@@ -220,7 +250,7 @@ function validateGuidancePlanRequest(payload) {
   }
 }
 
-function parseRequestJson(rawBody) {
+function parseRequestJson(rawBody: string): any {
   try {
     return JSON.parse(rawBody);
   } catch {
@@ -228,15 +258,15 @@ function parseRequestJson(rawBody) {
   }
 }
 
-function parseProviderPlan(rawText) {
+function parseProviderPlan(rawText: any): any {
   if (rawText && typeof rawText === "object" && !Array.isArray(rawText)) {
     return rawText;
   }
-  const candidates = [
+  const candidates: string[] = [
     String(rawText || ""),
     stripMarkdownJsonFence(String(rawText || "")),
     extractFirstJsonValue(String(rawText || "")),
-  ].filter(Boolean);
+  ].filter((candidate): candidate is string => Boolean(candidate));
   for (const candidate of candidates) {
     try {
       return JSON.parse(candidate);
@@ -247,9 +277,9 @@ function parseProviderPlan(rawText) {
   throw httpError(502, "Codex returned invalid JSON.", "invalid_provider_json");
 }
 
-function assertNoFormValues(value, pathParts = []) {
+function assertNoFormValues(value: any): void {
   if (Array.isArray(value)) {
-    value.forEach((item, index) => assertNoFormValues(item, [...pathParts, index]));
+    value.forEach((item) => assertNoFormValues(item));
     return;
   }
   if (!value || typeof value !== "object") return;
@@ -262,11 +292,11 @@ function assertNoFormValues(value, pathParts = []) {
         "form_value_detected",
       );
     }
-    assertNoFormValues(child, [...pathParts, key]);
+    assertNoFormValues(child);
   }
 }
 
-function hasMeaningfulValue(value) {
+function hasMeaningfulValue(value: any): boolean {
   if (typeof value === "string") return value.trim().length > 0;
   if (typeof value === "number" || typeof value === "boolean") return true;
   if (Array.isArray(value)) return value.some(hasMeaningfulValue);
@@ -276,14 +306,14 @@ function hasMeaningfulValue(value) {
   return false;
 }
 
-function redactPlanningPayloadUrls(value) {
+function redactPlanningPayloadUrls<T>(value: T): T {
   return redactUrlFields(structuredCloneCompatible(value));
 }
 
-function redactUrlFields(value) {
+function redactUrlFields(value: any): any {
   if (Array.isArray(value)) return value.map(redactUrlFields);
   if (!value || typeof value !== "object") return value;
-  const redacted = {};
+  const redacted: JsonRecord = {};
   for (const [key, child] of Object.entries(value)) {
     redacted[key] =
       URL_KEYS.has(key) && typeof child === "string"
@@ -293,7 +323,7 @@ function redactUrlFields(value) {
   return redacted;
 }
 
-function stripUrlQueryAndFragment(rawUrl) {
+function stripUrlQueryAndFragment(rawUrl: string): string {
   if (!rawUrl.trim()) return rawUrl;
   try {
     const parsed = new URL(rawUrl);
@@ -301,17 +331,18 @@ function stripUrlQueryAndFragment(rawUrl) {
     parsed.hash = "";
     return parsed.toString();
   } catch {
-    return rawUrl.split("#", 1)[0].split("?", 1)[0];
+    const withoutFragment = rawUrl.split("#", 1)[0] ?? "";
+    return withoutFragment.split("?", 1)[0] ?? "";
   }
 }
 
-function structuredCloneCompatible(value) {
+function structuredCloneCompatible<T>(value: T): T {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
-function readCodexCredentials(env) {
+function readCodexCredentials(env: Env): { accessToken: string } {
   const authFile = expandHome(env.BRIDGE_CODEX_AUTH_FILE || DEFAULT_CODEX_AUTH_FILE);
-  let payload;
+  let payload: any;
   try {
     payload = JSON.parse(fs.readFileSync(authFile, "utf8"));
   } catch {
@@ -329,7 +360,7 @@ function readCodexCredentials(env) {
   return { accessToken };
 }
 
-function codexAuthError() {
+function codexAuthError(): BridgeHttpError {
   return httpError(
     401,
     "Codex access token is missing or expired. Refresh Codex CLI auth, then restart the Bridge backend.",
@@ -337,14 +368,14 @@ function codexAuthError() {
   );
 }
 
-function isJwtExpired(token, skewSeconds = 60) {
+function isJwtExpired(token: string, skewSeconds = 60): boolean {
   const claims = decodeJwtPayload(token);
   if (!claims || typeof claims.exp !== "number") return false;
   const expiresAtMs = claims.exp * 1000;
   return expiresAtMs <= Date.now() + skewSeconds * 1000;
 }
 
-function decodeJwtPayload(token) {
+function decodeJwtPayload(token: string): any | null {
   try {
     const [, payload] = token.split(".");
     if (!payload) return null;
@@ -355,8 +386,8 @@ function decodeJwtPayload(token) {
   }
 }
 
-function codexHeaders(accessToken) {
-  const headers = {
+function codexHeaders(accessToken: string): Record<string, string> {
+  const headers: Record<string, string> = {
     "User-Agent": "codex_cli_rs/0.0.0 (Bridge Guided Task Mode)",
     originator: "codex_cli_rs",
   };
@@ -368,7 +399,7 @@ function codexHeaders(accessToken) {
   return headers;
 }
 
-function codexErrorMessage(data, status) {
+function codexErrorMessage(data: any, status: number): string {
   const message =
     data?.error?.message ||
     data?.error_description ||
@@ -377,9 +408,9 @@ function codexErrorMessage(data, status) {
   return `Codex plan creation failed. ${message}`;
 }
 
-function extractOpenAiResponseText(response) {
+function extractOpenAiResponseText(response: any): string {
   if (typeof response?.output_text === "string") return response.output_text;
-  const chunks = [];
+  const chunks: string[] = [];
   for (const item of response?.output || []) {
     for (const content of item.content || []) {
       if (typeof content.text === "string") chunks.push(content.text);
@@ -388,14 +419,14 @@ function extractOpenAiResponseText(response) {
   return chunks.join("").trim();
 }
 
-function guidancePlannerPromptLines(mode) {
+function guidancePlannerPromptLines(mode: any): string[] {
   return [
     ...guidancePlannerBasePromptLines(),
     ...guidancePlannerModePromptLines(mode),
   ];
 }
 
-function guidancePlannerBasePromptLines() {
+function guidancePlannerBasePromptLines(): string[] {
   return [
     "Create a guide-only browser assistance plan.",
     "Return only JSON that follows the provided schema.",
@@ -422,7 +453,7 @@ function guidancePlannerBasePromptLines() {
   ];
 }
 
-function guidancePlannerModePromptLines(mode) {
+function guidancePlannerModePromptLines(mode: any): string[] {
   if (mode === GUIDANCE_PLAN_MODES.INITIAL) {
     return [
       "Planner mode: initial.",
@@ -464,7 +495,7 @@ function guidancePlannerInput({
   previousSession,
   clarificationHistory,
   planningPayload,
-}) {
+}: JsonRecord): JsonRecord {
   return {
     mode,
     taskRequest,
@@ -474,7 +505,7 @@ function guidancePlannerInput({
   };
 }
 
-function compactClarificationHistory(history) {
+function compactClarificationHistory(history: any): JsonRecord[] {
   return (Array.isArray(history) ? history : []).slice(-6).map((item) =>
     compactObject({
       question: stringOrNull(item?.question),
@@ -483,7 +514,9 @@ function compactClarificationHistory(history) {
   );
 }
 
-function openAiGuidancePlanSchema(mode = GUIDANCE_PLAN_MODES.INITIAL) {
+function openAiGuidancePlanSchema(
+  mode: any = GUIDANCE_PLAN_MODES.INITIAL,
+): JsonRecord {
   const maxSteps = maxStepsForGuidancePlanMode(normalizeGuidancePlanMode(mode));
   const stringField = { type: "string" };
   const targetSchema = {
@@ -579,21 +612,21 @@ function openAiGuidancePlanSchema(mode = GUIDANCE_PLAN_MODES.INITIAL) {
   };
 }
 
-function normalizeGuidancePlanMode(mode) {
+function normalizeGuidancePlanMode(mode: any): string {
   return Object.values(GUIDANCE_PLAN_MODES).includes(mode)
     ? mode
     : GUIDANCE_PLAN_MODES.REFRESH;
 }
 
-function maxStepsForGuidancePlanMode(mode) {
+function maxStepsForGuidancePlanMode(mode: any): number {
   return mode === GUIDANCE_PLAN_MODES.REFRESH ? 8 : 2;
 }
 
-function stringOrNull(value) {
+function stringOrNull(value: any): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function compactObject(object) {
+function compactObject(object: any): JsonRecord {
   return Object.fromEntries(
     Object.entries(object || {}).filter(
       ([, value]) => value !== undefined && value !== null && value !== "",
@@ -601,22 +634,22 @@ function compactObject(object) {
   );
 }
 
-function stripMarkdownJsonFence(rawText) {
+function stripMarkdownJsonFence(rawText: string): string | null {
   const trimmed = rawText.trim();
   const match = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
   return match?.[1]?.trim() || null;
 }
 
-function extractFirstJsonValue(rawText) {
+function extractFirstJsonValue(rawText: string): string | null {
   const startIndex = rawText.search(/[\[{]/);
   if (startIndex < 0) return null;
 
-  const stack = [];
+  const stack: string[] = [];
   let inString = false;
   let escaped = false;
 
   for (let index = startIndex; index < rawText.length; index += 1) {
-    const character = rawText[index];
+    const character = rawText[index] ?? "";
     if (inString) {
       if (escaped) escaped = false;
       else if (character === "\\") escaped = true;
@@ -635,7 +668,10 @@ function extractFirstJsonValue(rawText) {
   return null;
 }
 
-function readRequestBody(req, maxRequestBytes) {
+function readRequestBody(
+  req: IncomingMessage,
+  maxRequestBytes: number,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const contentLength = Number(req.headers["content-length"] || 0);
     if (contentLength > maxRequestBytes) {
@@ -644,8 +680,8 @@ function readRequestBody(req, maxRequestBytes) {
     }
 
     let size = 0;
-    const chunks = [];
-    req.on("data", (chunk) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => {
       size += chunk.length;
       if (size > maxRequestBytes) {
         reject(httpError(413, "Request body is too large.", "request_too_large"));
@@ -658,9 +694,9 @@ function readRequestBody(req, maxRequestBytes) {
   });
 }
 
-function applyCors(req, res, env) {
+function applyCors(req: IncomingMessage, res: ServerResponse, env: Env): void {
   const origin = req.headers.origin;
-  if (origin && isAllowedOrigin(req, env)) {
+  if (typeof origin === "string" && isAllowedOrigin(req, env)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -668,45 +704,49 @@ function applyCors(req, res, env) {
   }
 }
 
-function isAllowedOrigin(req, env) {
+function isAllowedOrigin(req: IncomingMessage, env: Env): boolean {
   const origin = req.headers.origin;
   if (!origin) return true;
   return Boolean(env.BRIDGE_EXTENSION_ORIGIN && origin === env.BRIDGE_EXTENSION_ORIGIN);
 }
 
-function writeJson(res, statusCode, payload) {
+function writeJson(res: ServerResponse, statusCode: number, payload: any): void {
   res.writeHead(statusCode, { "Content-Type": "application/json" });
   res.end(JSON.stringify(payload));
 }
 
-function httpError(statusCode, message, code) {
-  const error = new Error(message);
+function httpError(
+  statusCode: number,
+  message: string,
+  code: string,
+): BridgeHttpError {
+  const error = new Error(message) as BridgeHttpError;
   error.statusCode = statusCode;
   error.code = code;
   error.exposeMessage = message;
   return error;
 }
 
-function providerFromEnv(env) {
+function providerFromEnv(env: Env): string {
   return (env.BRIDGE_BACKEND_PROVIDER || "codex").trim().toLowerCase();
 }
 
-function modelFromEnv(env) {
+function modelFromEnv(env: Env): string {
   return (env.BRIDGE_CODEX_MODEL || "").trim();
 }
 
-function expandHome(filePath) {
+function expandHome(filePath: string): string {
   if (filePath === "~") return os.homedir();
   if (filePath.startsWith("~/")) return path.join(os.homedir(), filePath.slice(2));
   return filePath;
 }
 
-function logMetadata(metadata) {
+function logMetadata(metadata: JsonRecord): void {
   console.log(JSON.stringify({ ts: new Date().toISOString(), ...metadata }));
 }
 
 if (require.main === module) {
-  main().catch((error) => {
+  main().catch((error: Error) => {
     console.error(error.message || error);
     process.exit(1);
   });

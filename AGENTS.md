@@ -24,8 +24,11 @@ Guided Task Mode has one active guidance session. It follows the active tab insi
 ## Important Files
 
 - `manifest.json`: root MV3 extension manifest.
-- `background.js`: root service worker, session lifecycle, model calls, page extraction, overlay injection, refresh logic.
-- `sidepanel.html`, `sidepanel.css`, `sidepanel.js`: root side panel UI.
+- `src/extension/background.ts`: service worker, session lifecycle, model calls, page extraction, overlay injection, refresh logic.
+- `src/extension/sidepanel.html`, `src/extension/sidepanel.css`, `src/extension/sidepanel.ts`: side panel UI.
+- `src/backend/server.ts`: local backend proxy for Codex plan creation.
+- `src/shared/guidance-contract.ts`: shared guidance plan and planning-payload behavior.
+- `dist/`: generated extension/backend output loaded by Chrome and Node; do not edit or commit it.
 - `CONTEXT.md`: domain language and behavior rules.
 - `plans/guided-task-mode-plan.md`: product/architecture plan for Guided Task Mode.
 - `docs/page-snapshot-json.md`: snapshot format reference.
@@ -33,7 +36,21 @@ Guided Task Mode has one active guidance session. It follows the active tab insi
 
 ## Local Commands
 
-The root extension is plain MV3 JavaScript and has no package manager command. Validate root changes by loading this folder in Chrome:
+Install dependencies once, then build before loading this folder in Chrome:
+
+```bash
+npm install
+npm run build
+```
+
+Validation commands:
+
+```bash
+npm run typecheck
+npm test
+```
+
+Load this repository root in Chrome after building:
 
 ```bash
 /Users/ejunpark/Documents/brigde_hakerthon
@@ -53,7 +70,8 @@ Check at least:
 
 ## Coding Notes
 
-- Prefer small, direct JavaScript changes. There is no build step for the root extension.
+- Prefer small, direct TypeScript changes and keep source in `src/`.
+- Run `npm run build` after extension or backend source changes; Chrome loads generated files from `dist/`.
 - Keep generated guide output strict JSON and validate it before rendering.
 - Use selectors only as one target-matching signal; role, label, text, href, bounds, and nearby context also matter.
 - Do not broaden extension permissions unless the task requires it.

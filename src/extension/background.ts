@@ -1,3 +1,6 @@
+// @ts-nocheck
+export {};
+
 const SESSION_STORAGE_KEY = "bridgeGuidanceSessions";
 const ACTIVITY_STORAGE_KEY = "bridgeGuidanceActivity";
 const PAGE_READY_TIMEOUT_MS = 8000;

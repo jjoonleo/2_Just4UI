@@ -6,7 +6,7 @@ This document records what the current Bridge project does, which Hermes Agent f
 
 Sources used:
 
-- Current Bridge repo files: `README.md`, `manifest.json`, `sidepanel.html`, `sidepanel.js`, `background.js`, `backend/server.js`, `backend/server.test.js`, `CONTEXT.md`.
+- Current Bridge repo files: `README.md`, `manifest.json`, `src/extension/sidepanel.html`, `src/extension/sidepanel.ts`, `src/extension/background.ts`, `src/backend/server.ts`, `src/shared/guidance-contract.ts`, `backend/server.test.js`, `CONTEXT.md`.
 - Hermes Agent official docs and source: `website/docs/user-guide/features/browser.md`, `mcp.md`, `skills.md`, `memory.md`, `cron.md`, `tools/browser_tool.py`, `tools/browser_cdp_tool.py`, `tools/mcp_tool.py`, `tools/memory_tool.py`, `tools/cronjob_tools.py`, `agent/browser_provider.py`, and `agent/browser_registry.py`.
 
 ## What Bridge Currently Does
@@ -14,8 +14,8 @@ Sources used:
 Bridge is a Chrome Manifest V3 side-panel extension for guide-only page assistance. The root extension is loaded from the repo root and uses:
 
 - `manifest.json` for side panel, background service worker, `activeTab`, `scripting`, `sidePanel`, `storage`, and `tabs` permissions.
-- `sidepanel.html` and `sidepanel.js` for the user-facing session dashboard, API key entry, task request entry, clarification answers, auto-refresh toggle, and end-guide action.
-- `background.js` as the source of truth for session lifecycle, page extraction, model requests, plan validation, overlay injection, page-state refresh, and tab/window movement.
+- `src/extension/sidepanel.html` and `src/extension/sidepanel.ts` for the user-facing session dashboard, API key entry, task request entry, clarification answers, auto-refresh toggle, and end-guide action.
+- `src/extension/background.ts` as the source of truth for session lifecycle, page extraction, model requests, plan validation, overlay injection, page-state refresh, and tab/window movement.
 - `CONTEXT.md` as the domain language source for Page Snapshot, Planning Payload, Guidance Session, Guide-Only Assistance, Plan Refresh, Risk Gate, and Completed Step History.
 
 The runtime flow is:
@@ -23,8 +23,8 @@ The runtime flow is:
 1. User opens a normal `http://` or `https://` page.
 2. User opens the extension side panel.
 3. User chooses Backend Proxy, Gemini Demo, or OpenAI Demo, then enters the matching backend URL or demo API key and a task request.
-4. `sidepanel.js` sends `BRIDGE_START_GUIDE` to `background.js`.
-5. `background.js` injects `collectPageSnapshotForGuide()` into the active tab.
+4. `src/extension/sidepanel.ts` sends `BRIDGE_START_GUIDE` to `src/extension/background.ts`.
+5. `src/extension/background.ts` injects `collectPageSnapshotForGuide()` into the active tab.
 6. The snapshot is reduced by `createPlanningPayload()` so the model receives selected page metadata, viewport data, headings, landmarks, interactive elements, form metadata, links, and selected text blocks.
 7. `createGuidancePlan()` calls the selected provider: Backend Proxy, Gemini, or OpenAI, and asks for a strict Guidance Plan JSON contract.
 8. `validateGuidancePlan()` enforces `ready` vs `needsClarification`, step caps by planner mode, required step fields, normalized targets, completion metadata, and risk level.
@@ -33,10 +33,10 @@ The runtime flow is:
 
 Current provider state:
 
-- `sidepanel.html` exposes Backend Proxy, Gemini Demo, and OpenAI Demo provider options.
-- `sidepanel.js` normalizes those provider IDs and defaults unknown values to Backend Proxy.
-- `background.js` contains matching provider configuration for Backend Proxy, Gemini, and OpenAI.
-- `backend/server.js` provides the current Backend Proxy path for Codex plan creation, with dependency-free tests in `backend/server.test.js`.
+- `src/extension/sidepanel.html` exposes Backend Proxy, Gemini Demo, and OpenAI Demo provider options.
+- `src/extension/sidepanel.ts` normalizes those provider IDs and defaults unknown values to Backend Proxy.
+- `src/extension/background.ts` contains matching provider configuration for Backend Proxy, Gemini, and OpenAI.
+- `src/backend/server.ts` provides the current Backend Proxy path for Codex plan creation, with dependency-light tests in `backend/server.test.js`.
 
 ## Hermes Features Related To Bridge
 
@@ -154,7 +154,7 @@ Hermes browser tools route through a session/provider layer:
 
 Bridge equivalent:
 
-- `background.js` already centralizes a single active Guidance Session in `chrome.storage.local`.
+- `src/extension/background.ts` already centralizes a single active Guidance Session in `chrome.storage.local`.
 - The closest improvement would be to split model providers behind a small provider interface, instead of mixing UI labels, provider defaults, fetch request construction, and error text in one file.
 - Bridge should keep one product session model, but separate provider-specific model calls from session orchestration.
 
@@ -221,7 +221,7 @@ Bridge equivalent:
 ### Borrow From Hermes
 
 1. Use a clearer tool/session/provider architecture.
-   - Keep `background.js` as orchestrator, but factor model providers and plan validation into clearer modules when the repo gains a build step or bundling strategy.
+   - Keep `src/extension/background.ts` as orchestrator, but factor model providers and plan validation into clearer TypeScript modules.
 
 2. Adopt Hermes-style browser QA for development.
    - Use browser automation or CDP only as a developer test harness, not as user-facing behavior.

@@ -70,10 +70,10 @@ The orchestration layer owns:
 
 Before adding a new provider, fix provider drift in the root extension:
 
-- `sidepanel.html` should not show `Gemini` for an `openai` option.
-- `sidepanel.js` should not force `getSelectedProvider()` to always return `openai` unless the UI is intentionally OpenAI-only.
+- `src/extension/sidepanel.html` should not show `Gemini` for an `openai` option.
+- `src/extension/sidepanel.ts` should not force `getSelectedProvider()` to always return `openai` unless the UI is intentionally OpenAI-only.
 - `PROVIDER_DEFAULTS` and `PROVIDER_DISPLAY_LABELS` should use honest labels.
-- `background.js` `PROVIDER_CONFIG.openai.label` should say `OpenAI`, not `Gemini`.
+- `src/extension/background.ts` `PROVIDER_CONFIG.openai.label` should say `OpenAI`, not `Gemini`.
 - Error messages in the OpenAI path should mention OpenAI, not Gemini.
 
 After that cleanup, adding providers becomes mostly adapter work instead of touching the whole session flow.
@@ -152,7 +152,7 @@ Decision: the backend validates provider output as parseable JSON, while the ext
 
 Decision: backend proxy failure should not automatically create a failed Guidance Session. During initial guide creation, no new Guidance Session should be saved and the side panel should show the error. During Plan Refresh or Guidance Continuation, the existing Guidance Session should remain unchanged and the side panel should show the Guide Activity failure. A single provider failure should not end or fail an otherwise usable guide.
 
-Decision: for the first backend proxy implementation, the backend may temporarily duplicate the planner prompt and Plan Contract schema from `background.js`. This should be marked as temporary and kept small. Do not introduce a shared build/module strategy only for this first integration; add parity tests or extract shared modules later when the repo has a clear extension/backend module strategy.
+Decision update: Bridge now has a TypeScript build and shared guidance-contract module. New provider work should prefer shared typed contracts over adding more duplicated Plan Contract or planning-payload behavior.
 
 Decision: start with a repo-local backend proxy for demo integration, but keep the request and response contract deployment-oriented. The extension should treat it as a generic backend provider endpoint rather than hardcoding Codex-specific behavior throughout the UI and service worker.
 
@@ -160,14 +160,18 @@ Initial local shape:
 
 ```text
 backend/
-  server.js
+  server.test.js
+src/backend/
+  server.ts
+dist/backend/
+  server.cjs
   .env.example
 
 Extension
   -> http://localhost:<port>/guidance-plan
 ```
 
-Decision: the first local backend should use Node's built-in `http` server and avoid runtime dependencies. A `package.json` is optional for convenience scripts, but the backend should be runnable as `node backend/server.js`.
+Decision: the first local backend should use Node's built-in `http` server and avoid runtime dependencies. Build before running it, then start it with `node dist/backend/server.cjs`.
 
 Decision: the first backend should read normal process environment variables only and should not auto-load `.env` with a dependency. Keep `backend/.env.example` as documentation for local setup.
 
@@ -191,7 +195,7 @@ BRIDGE_CODEX_AUTH_FILE=~/.codex/auth.json
 
 Changing the backend from Codex to another provider should not require changing the extension request contract.
 
-Decision: the extension stores only the backend base URL for the proxy provider, not provider secrets or backend provider selection. Store it in `chrome.storage.local` with a side-panel field and default it to `http://localhost:8787`; `background.js` should call `${backendBaseUrl}/guidance-plan`.
+Decision: the extension stores only the backend base URL for the proxy provider, not provider secrets or backend provider selection. Store it in `chrome.storage.local` with a side-panel field and default it to `http://localhost:8787`; `src/extension/background.ts` should call `${backendBaseUrl}/guidance-plan`.
 
 Decision: the local backend should restrict browser CORS by configuration. Use an environment variable such as `BRIDGE_EXTENSION_ORIGIN=chrome-extension://<id>` and allow that origin for extension requests. Requests without a browser `Origin` header may be allowed for local tools such as `curl`. Do not use wildcard CORS for a backend that can access Codex credentials.
 
@@ -281,7 +285,7 @@ Every provider path must preserve these rules:
 1. Fix existing Gemini/OpenAI label and provider-selection drift.
 2. Extract provider metadata into one provider registry.
 3. Extract `createGeminiGuidancePlan()` and `createOpenAiGuidancePlan()` behind a shared adapter boundary.
-4. Keep `background.js` as the session orchestrator until a build step exists.
+4. Keep `src/extension/background.ts` as the session orchestrator while factoring provider and Plan Contract behavior into shared TypeScript modules.
 5. Add a backend proxy adapter for release-oriented provider calls.
 6. Add provider-focused tests around label normalization, request construction, response parsing, and provider error messages.
 7. Consider a Codex-style backend adapter only after the proxy path exists.
