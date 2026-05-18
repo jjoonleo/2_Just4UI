@@ -1,10 +1,10 @@
 # Provider Boundary
 
-This folder is reserved for plan-creation provider adapters. Provider modules should hide request shape, credentials, error formatting, and model-specific response parsing behind one Bridge-facing interface.
+This folder contains plan-creation provider adapters. Provider modules hide request shape, credentials, error formatting, and provider-specific response parsing behind one Bridge-facing interface.
 
-Expected modules:
+Current modules:
 
-- `provider.ts` for the shared provider interface.
-- `backend-provider.ts` for the Backend Proxy path.
+- `provider.ts` exposes the Bridge-facing plan-creation boundary used by the service worker.
+- `backend-provider.ts` owns Backend Proxy request construction, URL normalization, JSON response extraction, and backend error formatting.
 
 Providers return Plan Contract JSON only. They do not own Guidance Session lifecycle, overlay rendering, or page extraction.

@@ -1,5 +1,6 @@
 // @ts-nocheck
-export {};
+import { getProviderConfig, normalizeProviderId } from "../../shared/provider-registry";
+import { createProviderPlan } from "../../providers/provider";
 
 const SESSION_STORAGE_KEY = "bridgeGuidanceSessions";
 const ACTIVITY_STORAGE_KEY = "bridgeGuidanceActivity";
@@ -12,14 +13,6 @@ const GUIDANCE_PLAN_MODES = {
   INITIAL: "initial",
   REFRESH: "refresh",
   CONTINUE_AFTER_WINDOW_ENDED: "continueAfterWindowEnded",
-};
-const PROVIDER_CONFIG = {
-  backend: {
-    backendBaseUrlStorageKey: "bridgeBackendBaseUrl",
-    defaultBaseUrl: "http://localhost:8787",
-    defaultModel: "backend-proxy",
-    label: "Backend Proxy",
-  },
 };
 const pageStateRefreshes = new Map();
 
@@ -112,7 +105,7 @@ async function startGuide({
   clarificationHistory = [],
 }) {
   const modelProvider = normalizeProvider(provider);
-  const providerConfig = PROVIDER_CONFIG[modelProvider];
+  const providerConfig = getProviderConfig(modelProvider);
 
   try {
     await setGuideActivity({
@@ -132,7 +125,7 @@ async function startGuide({
 
     await setGuideActivity({
       phase: "askingAi",
-      message: `Asking ${providerConfig.label}`,
+      message: `Asking ${providerConfig.displayLabel}`,
       taskRequest,
     });
 
@@ -301,7 +294,7 @@ async function refreshHostTab(tabId, message = "", options = {}) {
 
   try {
     const modelProvider = normalizeProvider(initialSession.provider);
-    const providerConfig = PROVIDER_CONFIG[modelProvider];
+    const providerConfig = getProviderConfig(modelProvider);
     const backendBaseUrl = await getBackendBaseUrl(providerConfig);
 
     await removeOverlayFromTab(tabId);
@@ -322,8 +315,8 @@ async function refreshHostTab(tabId, message = "", options = {}) {
     await setGuideActivity({
       phase: "askingAi",
       message: isPageStateRefresh
-        ? `Asking ${providerConfig.label} for updated guidance`
-        : `Asking ${providerConfig.label}`,
+        ? `Asking ${providerConfig.displayLabel} for updated guidance`
+        : `Asking ${providerConfig.displayLabel}`,
       taskRequest: session.taskRequest,
     });
 
@@ -1138,8 +1131,7 @@ function compactContinuationTarget(target = {}) {
 }
 
 function normalizeProvider(provider) {
-  if (provider !== "backend") return "backend";
-  return "backend";
+  return normalizeProviderId(provider);
 }
 
 async function getBackendBaseUrl(providerConfig) {
@@ -1149,7 +1141,7 @@ async function getBackendBaseUrl(providerConfig) {
   const backendBaseUrl =
     stringOrNull(stored[providerConfig.backendBaseUrlStorageKey]) ||
     providerConfig.defaultBaseUrl;
-  if (!backendBaseUrl) throw new Error(`${providerConfig.label} URL is missing.`);
+  if (!backendBaseUrl) throw new Error(`${providerConfig.displayLabel} URL is missing.`);
   return backendBaseUrl;
 }
 
@@ -1243,8 +1235,8 @@ async function createGuidancePlan({
   clarificationHistory = [],
 }) {
   const normalizedMode = normalizeGuidancePlanMode(mode);
-  if (provider !== "backend") throw new Error("Only Backend Proxy is supported.");
-  return createBackendGuidancePlan({
+  const plan = await createProviderPlan({
+    provider,
     mode: normalizedMode,
     backendBaseUrl,
     taskRequest,
@@ -1252,6 +1244,7 @@ async function createGuidancePlan({
     previousSession,
     clarificationHistory,
   });
+  return validateGuidancePlan(plan, taskRequest, normalizedMode);
 }
 
 function normalizeGuidancePlanMode(mode) {
@@ -1262,45 +1255,6 @@ function normalizeGuidancePlanMode(mode) {
 
 function maxStepsForGuidancePlanMode(mode) {
   return mode === GUIDANCE_PLAN_MODES.REFRESH ? 8 : 2;
-}
-
-async function createBackendGuidancePlan({
-  mode,
-  backendBaseUrl,
-  taskRequest,
-  planningPayload,
-  previousSession,
-  clarificationHistory,
-}) {
-  const endpoint = `${normalizeBackendBaseUrl(backendBaseUrl)}/guidance-plan`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contractVersion: 1,
-      mode,
-      taskRequest,
-      planningPayload,
-      previousSession,
-      clarificationHistory: compactClarificationHistory(clarificationHistory),
-    }),
-  });
-
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(
-      data?.error || `Backend Proxy request failed with HTTP ${response.status}.`,
-    );
-  }
-  return validateGuidancePlan(data, taskRequest, mode);
-}
-
-function normalizeBackendBaseUrl(baseUrl) {
-  const trimmed = String(baseUrl || "").trim().replace(/\/+$/, "");
-  if (!trimmed) throw new Error("Backend Proxy URL is missing.");
-  return trimmed;
 }
 
 function compactClarificationHistory(history) {
