@@ -4,8 +4,8 @@ import { build } from "esbuild";
 await rm("dist", { force: true, recursive: true });
 
 await build({
-  entryPoints: ["src/shared/guidance-contract.ts"],
-  outfile: "dist/shared/guidance-contract.mjs",
+  entryPoints: ["src/domain/guidance-contract.ts"],
+  outfile: "dist/domain/guidance-contract.mjs",
   bundle: true,
   format: "esm",
   platform: "neutral",
@@ -25,12 +25,12 @@ await build({
 
 await mkdir("dist", { recursive: true });
 await Promise.all([
-  copyFile("src/extension/sidepanel.html", "dist/sidepanel.html"),
-  copyFile("src/extension/sidepanel.css", "dist/sidepanel.css")
+  copyFile("src/extension/sidepanel/sidepanel.html", "dist/sidepanel.html"),
+  copyFile("src/extension/sidepanel/sidepanel.css", "dist/sidepanel.css")
 ]);
 
 await build({
-  entryPoints: ["src/extension/background.ts"],
+  entryPoints: ["src/extension/service-worker/main.ts"],
   outfile: "dist/background.js",
   bundle: true,
   format: "iife",
@@ -40,7 +40,7 @@ await build({
 });
 
 await build({
-  entryPoints: ["src/extension/sidepanel.ts"],
+  entryPoints: ["src/extension/sidepanel/main.ts"],
   outfile: "dist/sidepanel.js",
   bundle: true,
   format: "iife",

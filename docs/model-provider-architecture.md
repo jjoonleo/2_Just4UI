@@ -70,10 +70,10 @@ The orchestration layer owns:
 
 Before adding a new provider, fix provider drift in the root extension:
 
-- `src/extension/sidepanel.html` should not show `Gemini` for an `openai` option.
-- `src/extension/sidepanel.ts` should not force `getSelectedProvider()` to always return `openai` unless the UI is intentionally OpenAI-only.
+- `src/extension/sidepanel/sidepanel.html` should not show `Gemini` for an `openai` option.
+- `src/extension/sidepanel/main.ts` should not force `getSelectedProvider()` to always return `openai` unless the UI is intentionally OpenAI-only.
 - `PROVIDER_DEFAULTS` and `PROVIDER_DISPLAY_LABELS` should use honest labels.
-- `src/extension/background.ts` `PROVIDER_CONFIG.openai.label` should say `OpenAI`, not `Gemini`.
+- `src/extension/service-worker/main.ts` `PROVIDER_CONFIG.openai.label` should say `OpenAI`, not `Gemini`.
 - Error messages in the OpenAI path should mention OpenAI, not Gemini.
 
 After that cleanup, adding providers becomes mostly adapter work instead of touching the whole session flow.
@@ -195,7 +195,7 @@ BRIDGE_CODEX_AUTH_FILE=~/.codex/auth.json
 
 Changing the backend from Codex to another provider should not require changing the extension request contract.
 
-Decision: the extension stores only the backend base URL for the proxy provider, not provider secrets or backend provider selection. Store it in `chrome.storage.local` with a side-panel field and default it to `http://localhost:8787`; `src/extension/background.ts` should call `${backendBaseUrl}/guidance-plan`.
+Decision: the extension stores only the backend base URL for the proxy provider, not provider secrets or backend provider selection. Store it in `chrome.storage.local` with a side-panel field and default it to `http://localhost:8787`; `src/extension/service-worker/main.ts` should call `${backendBaseUrl}/guidance-plan`.
 
 Decision: the local backend should restrict browser CORS by configuration. Use an environment variable such as `BRIDGE_EXTENSION_ORIGIN=chrome-extension://<id>` and allow that origin for extension requests. Requests without a browser `Origin` header may be allowed for local tools such as `curl`. Do not use wildcard CORS for a backend that can access Codex credentials.
 
@@ -285,7 +285,7 @@ Every provider path must preserve these rules:
 1. Fix existing Gemini/OpenAI label and provider-selection drift.
 2. Extract provider metadata into one provider registry.
 3. Extract `createGeminiGuidancePlan()` and `createOpenAiGuidancePlan()` behind a shared adapter boundary.
-4. Keep `src/extension/background.ts` as the session orchestrator while factoring provider and Plan Contract behavior into shared TypeScript modules.
+4. Keep `src/extension/service-worker/main.ts` as the session orchestrator while factoring provider and Plan Contract behavior into shared TypeScript modules.
 5. Add a backend proxy adapter for release-oriented provider calls.
 6. Add provider-focused tests around label normalization, request construction, response parsing, and provider error messages.
 7. Consider a Codex-style backend adapter only after the proxy path exists.

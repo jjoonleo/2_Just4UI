@@ -24,10 +24,15 @@ Guided Task Mode has one active guidance session. It follows the active tab insi
 ## Important Files
 
 - `manifest.json`: root MV3 extension manifest.
-- `src/extension/background.ts`: service worker, session lifecycle, model calls, page extraction, overlay injection, refresh logic.
-- `src/extension/sidepanel.html`, `src/extension/sidepanel.css`, `src/extension/sidepanel.ts`: side panel UI.
+- `src/extension/service-worker/main.ts`: service worker entry point, session lifecycle, model calls, page extraction, overlay injection, refresh logic.
+- `src/extension/sidepanel/sidepanel.html`, `src/extension/sidepanel/sidepanel.css`, `src/extension/sidepanel/main.ts`: side panel UI.
+- `src/extension/content/`: page-runtime boundary for future Page Snapshot, overlay, target matching, and Page State Change modules.
+- `src/extension/platform/`: Chrome API wrapper boundary for future testable runtime adapters.
 - `src/backend/server.ts`: local backend proxy for Codex plan creation.
-- `src/shared/guidance-contract.ts`: shared guidance plan and planning-payload behavior.
+- `src/domain/guidance-contract.ts`: shared guidance plan and planning-payload behavior.
+- `src/shared/`: cross-runtime message and storage key constants.
+- `src/providers/`: future plan-creation provider adapter boundary.
+- `docs/chrome-extension-architecture.md`: developer guide for the project architecture.
 - `dist/`: generated extension/backend output loaded by Chrome and Node; do not edit or commit it.
 - `CONTEXT.md`: domain language and behavior rules.
 - `plans/guided-task-mode-plan.md`: product/architecture plan for Guided Task Mode.

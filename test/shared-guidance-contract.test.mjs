@@ -7,7 +7,7 @@ import {
   parseProviderPlan,
   redactPlanningPayloadUrls,
   validateGuidancePlan
-} from "../dist/shared/guidance-contract.mjs";
+} from "../dist/domain/guidance-contract.mjs";
 
 test("planning payload URL redaction preserves page identity while removing query strings and fragments", () => {
   const redacted = redactPlanningPayloadUrls({

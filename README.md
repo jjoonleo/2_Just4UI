@@ -67,6 +67,10 @@ npm test
 npm run build
 ```
 
+## Architecture
+
+Bridge source is organized by Chrome extension runtime boundary under `src/`. See `docs/chrome-extension-architecture.md` for the folder map, dependency rules, and the expected refactor path for the MV3 service worker.
+
 ## Gemini API Key Troubleshooting
 
 If Gemini returns `Requests to this API generativelanguage.googleapis.com method ... GenerateContent are blocked`, the pasted key is not allowed to call the Gemini Developer API. Create a Gemini API key from Google AI Studio, or update the key in Google Cloud Console so its API restrictions allow **Generative Language API** (`generativelanguage.googleapis.com`). If you changed API settings moments ago, wait a few minutes and retry.
