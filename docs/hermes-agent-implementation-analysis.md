@@ -6,7 +6,7 @@ This document records what the current Bridge project does, which Hermes Agent f
 
 Sources used:
 
-- Current Bridge repo files: `README.md`, `manifest.json`, `sidepanel.html`, `sidepanel.js`, `background.js`, `CONTEXT.md`.
+- Current Bridge repo files: `README.md`, `manifest.json`, `sidepanel.html`, `sidepanel.js`, `background.js`, `backend/server.js`, `backend/server.test.js`, `CONTEXT.md`.
 - Hermes Agent official docs and source: `website/docs/user-guide/features/browser.md`, `mcp.md`, `skills.md`, `memory.md`, `cron.md`, `tools/browser_tool.py`, `tools/browser_cdp_tool.py`, `tools/mcp_tool.py`, `tools/memory_tool.py`, `tools/cronjob_tools.py`, `agent/browser_provider.py`, and `agent/browser_registry.py`.
 
 ## What Bridge Currently Does
@@ -22,21 +22,21 @@ The runtime flow is:
 
 1. User opens a normal `http://` or `https://` page.
 2. User opens the extension side panel.
-3. User enters an API key and a task request.
+3. User chooses Backend Proxy, Gemini Demo, or OpenAI Demo, then enters the matching backend URL or demo API key and a task request.
 4. `sidepanel.js` sends `BRIDGE_START_GUIDE` to `background.js`.
 5. `background.js` injects `collectPageSnapshotForGuide()` into the active tab.
 6. The snapshot is reduced by `createPlanningPayload()` so the model receives selected page metadata, viewport data, headings, landmarks, interactive elements, form metadata, links, and selected text blocks.
-7. `createGuidancePlan()` calls Gemini or OpenAI and asks for a strict Guidance Plan JSON contract.
+7. `createGuidancePlan()` calls the selected provider: Backend Proxy, Gemini, or OpenAI, and asks for a strict Guidance Plan JSON contract.
 8. `validateGuidancePlan()` enforces `ready` vs `needsClarification`, step caps by planner mode, required step fields, normalized targets, completion metadata, and risk level.
 9. The extension injects an overlay into the original page. It highlights and explains but does not click, type, submit, purchase, delete, or confirm.
 10. A single Guidance Session follows the active tab inside one browser window. Navigation, active-tab changes, tab close handoffs, and meaningful page-state changes trigger refresh or pause behavior.
 
-Important current drift:
+Current provider state:
 
-- The README says the UI supports Gemini or OpenAI.
-- Current `sidepanel.html` exposes only one provider option: value `openai`, displayed as `Gemini`.
-- Current `sidepanel.js` forces `getSelectedProvider()` to return `openai`.
-- `background.js` still contains both Gemini and OpenAI request paths, but the active side-panel UI is effectively OpenAI-only and mislabeled.
+- `sidepanel.html` exposes Backend Proxy, Gemini Demo, and OpenAI Demo provider options.
+- `sidepanel.js` normalizes those provider IDs and defaults unknown values to Backend Proxy.
+- `background.js` contains matching provider configuration for Backend Proxy, Gemini, and OpenAI.
+- `backend/server.js` provides the current Backend Proxy path for Codex plan creation, with dependency-free tests in `backend/server.test.js`.
 
 ## Hermes Features Related To Bridge
 
@@ -257,9 +257,9 @@ Bridge equivalent:
 
 ## Concrete Next Work
 
-1. Fix provider drift.
-   - Either restore true Gemini/OpenAI selection or make the UI honestly OpenAI-only.
-   - Align provider labels, placeholders, default models, README, and `PROVIDER_CONFIG`.
+1. Keep provider configuration aligned.
+   - Maintain Backend Proxy, Gemini Demo, and OpenAI Demo labels across README, side panel UI, side panel defaults, and `PROVIDER_CONFIG`.
+   - Keep provider-specific credentials and model defaults behind a small adapter boundary before adding another provider.
 
 2. Follow the model provider architecture note.
    - Keep the extension responsible for Guidance Session orchestration, Planning Payload creation, Plan Contract validation, and overlay rendering.
@@ -275,9 +275,9 @@ Bridge equivalent:
 4. Add a model contract doc.
    - Extract `guidancePlanSchema`, `openAiGuidancePlanSchema`, and validation rules into a stable reference.
 
-5. Add behavior tests where possible.
-   - The project currently has no build/test harness.
-   - The first useful tests are pure JavaScript tests around planning payload filtering, plan validation, completed-step filtering, and provider label normalization.
+5. Expand behavior tests where possible.
+   - Backend proxy tests already exist in `backend/server.test.js`; they cover URL redaction, form-value rejection, request size limits, provider JSON parsing, and required Codex model configuration.
+   - The next useful tests are extension-side pure JavaScript tests around planning payload filtering, plan validation, completed-step filtering, provider label normalization, and Guide-Only policy rejection.
 
 6. Consider a development-only Hermes workflow.
    - Use Hermes browser tools or Chrome DevTools MCP to run smoke checks against the unpacked extension.
