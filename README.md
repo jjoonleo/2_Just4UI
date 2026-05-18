@@ -64,7 +64,10 @@ Chrome blocks extensions from injecting scripts into internal pages such as `chr
 npm run typecheck
 npm test
 npm run build
+npm run smoke:chrome
 ```
+
+`npm run smoke:chrome` is opt-in development QA. It launches a temporary Chrome profile, loads the unpacked extension, serves local fixture pages, and checks core Guided Task Mode browser behavior through CDP. For the full workflow, use `docs/chrome-cdp-smoke-workflow.md`.
 
 ## Architecture
 

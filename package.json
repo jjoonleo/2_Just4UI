@@ -5,7 +5,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build.mjs",
-    "test": "npm run build && node --test test/*.test.mjs backend/*.test.js"
+    "test": "npm run build && node --test test/*.test.mjs backend/*.test.js",
+    "smoke:chrome": "npm run build && node scripts/chrome-cdp-smoke.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.42",
