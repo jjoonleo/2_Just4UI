@@ -6,7 +6,8 @@ import {
   maxStepsForGuidancePlanMode,
   parseProviderPlan,
   redactPlanningPayloadUrls,
-  validateGuidancePlan
+  validateGuidancePlan,
+  validateGuideOnlyPolicy
 } from "../dist/domain/guidance-contract.mjs";
 
 test("planning payload URL redaction preserves page identity while removing query strings and fragments", () => {
@@ -73,4 +74,101 @@ test("guidance plan validation enforces mode step limits and normalizes steps", 
   assert.equal(plan.status, "ready");
   assert.equal(plan.steps[0].id, "step-1");
   assert.equal(plan.steps[0].completion.type, "click");
+});
+
+test("Guide-Only policy rejects model output that says the extension performs page actions", () => {
+  const plan = validateGuidancePlan(
+    {
+      status: "ready",
+      clarifiedTaskRequest: "Confirm the purchase",
+      summary: "Confirm the purchase.",
+      steps: [
+        {
+          title: "Confirm purchase",
+          instruction: "The extension will click the Confirm purchase button for you.",
+          target: { role: "button", text: "Confirm purchase" },
+          risk: "high"
+        }
+      ]
+    },
+    "Confirm the purchase",
+    "initial"
+  );
+
+  assert.throws(() => validateGuideOnlyPolicy(plan), /Guide-Only/i);
+});
+
+test("Guide-Only policy upgrades sensitive or destructive steps to high risk", () => {
+  const plan = validateGuidancePlan(
+    {
+      status: "ready",
+      clarifiedTaskRequest: "Delete my account",
+      summary: "Guide the user to account deletion.",
+      steps: [
+        {
+          title: "Open account deletion",
+          instruction: "Use the Delete account button.",
+          target: { role: "button", text: "Delete account" },
+          risk: "low"
+        }
+      ]
+    },
+    "Delete my account",
+    "initial"
+  );
+
+  const policyChecked = validateGuideOnlyPolicy(plan);
+
+  assert.equal(policyChecked.status, "ready");
+  assert.equal(policyChecked.steps[0].risk, "high");
+});
+
+test("Guide-Only policy upgrades payment steps to high risk", () => {
+  const plan = validateGuidancePlan(
+    {
+      status: "ready",
+      clarifiedTaskRequest: "Pay for my order",
+      summary: "Guide the user to payment.",
+      steps: [
+        {
+          title: "Review payment",
+          instruction: "Use the Pay now button when you are ready.",
+          target: { role: "button", text: "Pay now" },
+          risk: "low"
+        }
+      ]
+    },
+    "Pay for my order",
+    "initial"
+  );
+
+  const policyChecked = validateGuideOnlyPolicy(plan);
+
+  assert.equal(policyChecked.status, "ready");
+  assert.equal(policyChecked.steps[0].risk, "high");
+});
+
+test("Guide-Only policy upgrades personal-information steps to high risk", () => {
+  const plan = validateGuidancePlan(
+    {
+      status: "ready",
+      clarifiedTaskRequest: "Update my profile",
+      summary: "Guide the user to profile updates.",
+      steps: [
+        {
+          title: "Review contact details",
+          instruction: "Use the fields for your home address and phone number.",
+          target: { role: "textbox", label: "Home address" },
+          risk: "low"
+        }
+      ]
+    },
+    "Update my profile",
+    "initial"
+  );
+
+  const policyChecked = validateGuideOnlyPolicy(plan);
+
+  assert.equal(policyChecked.status, "ready");
+  assert.equal(policyChecked.steps[0].risk, "high");
 });

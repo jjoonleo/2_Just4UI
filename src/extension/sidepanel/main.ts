@@ -1,14 +1,13 @@
-export {};
+import {
+  BACKEND_PROVIDER_ID,
+  getProviderConfig,
+  normalizeProviderId,
+  PROVIDER_DEPRECATED_STORAGE_KEYS,
+  type ProviderId
+} from "../../providers/provider-registry";
 
-type Provider = "backend";
+type Provider = ProviderId;
 type StoredSettings = Record<string, string | undefined>;
-type ProviderConfig = {
-  label: string;
-  placeholder: string;
-  model: string;
-  baseUrl?: string;
-  baseUrlStorageKey?: string;
-};
 type ClarificationState = {
   mode: "start" | "session";
   provider: Provider | "";
@@ -63,26 +62,7 @@ const GUIDE_STORAGE_KEYS = {
   provider: "bridgeModelProvider",
   backendBaseUrl: "bridgeBackendBaseUrl"
 };
-const DEPRECATED_STORAGE_KEYS = [
-  "bridgeGeminiApiKey",
-  "bridgeGeminiModel",
-  "bridgeOpenAiApiKey",
-  "bridgeOpenAiModel"
-];
-
-const PROVIDER_DEFAULTS: Record<Provider, ProviderConfig> = {
-  backend: {
-    label: "Backend URL",
-    placeholder: "http://localhost:8787",
-    model: "backend-proxy",
-    baseUrl: "http://localhost:8787",
-    baseUrlStorageKey: GUIDE_STORAGE_KEYS.backendBaseUrl
-  }
-};
-
-const PROVIDER_DISPLAY_LABELS: Record<Provider, string> = {
-  backend: "Backend Proxy"
-};
+const BACKEND_PROVIDER_CONFIG = getProviderConfig(BACKEND_PROVIDER_ID);
 
 let clarificationState: ClarificationState | null = null;
 
@@ -139,16 +119,16 @@ async function restoreGuideSettings(): Promise<void> {
   if (stored[GUIDE_STORAGE_KEYS.provider] !== provider) {
     await chrome.storage.local.set({ [GUIDE_STORAGE_KEYS.provider]: provider });
   }
-  await chrome.storage.local.remove(DEPRECATED_STORAGE_KEYS);
+  await chrome.storage.local.remove([...PROVIDER_DEPRECATED_STORAGE_KEYS]);
   applyProviderFields(stored);
 }
 
 async function resetBackendUrl(): Promise<void> {
   await chrome.storage.local.set({
-    [PROVIDER_DEFAULTS.backend.baseUrlStorageKey as string]: PROVIDER_DEFAULTS.backend.baseUrl,
-    [GUIDE_STORAGE_KEYS.provider]: "backend"
+    [BACKEND_PROVIDER_CONFIG.backendBaseUrlStorageKey]: BACKEND_PROVIDER_CONFIG.defaultBaseUrl,
+    [GUIDE_STORAGE_KEYS.provider]: BACKEND_PROVIDER_ID
   });
-  backendUrlInput.value = PROVIDER_DEFAULTS.backend.baseUrl || "";
+  backendUrlInput.value = BACKEND_PROVIDER_CONFIG.defaultBaseUrl;
   setStatus("Backend URL reset.");
 }
 
@@ -200,31 +180,29 @@ async function toggleAutoRefresh(): Promise<void> {
 }
 
 function applyProviderFields(stored: StoredSettings = {}): void {
-  const config = PROVIDER_DEFAULTS.backend;
   backendUrlField.hidden = false;
   resetUrlButton.textContent = "Reset URL";
-  backendUrlInput.placeholder = PROVIDER_DEFAULTS.backend.placeholder;
+  backendUrlInput.placeholder = BACKEND_PROVIDER_CONFIG.defaultBaseUrl;
   backendUrlInput.value =
-    stored[PROVIDER_DEFAULTS.backend.baseUrlStorageKey as string] ||
-    PROVIDER_DEFAULTS.backend.baseUrl ||
-    "";
-  modelInput.value = config.model;
+    stored[BACKEND_PROVIDER_CONFIG.backendBaseUrlStorageKey] ||
+    BACKEND_PROVIDER_CONFIG.defaultBaseUrl;
+  modelInput.value = BACKEND_PROVIDER_CONFIG.defaultModel;
 }
 
 function getSelectedProvider(): Provider {
-  return "backend";
+  return BACKEND_PROVIDER_ID;
 }
 
 function normalizeProvider(provider: unknown): Provider {
-  return "backend";
+  return normalizeProviderId(provider);
 }
 
 async function startGuidedTaskMode(): Promise<void> {
   const provider = getSelectedProvider();
-  const providerConfig = PROVIDER_DEFAULTS[provider];
+  const providerConfig = getProviderConfig(provider);
   const taskRequest = taskRequestInput.value.trim();
-  const backendBaseUrl = backendUrlInput.value.trim() || PROVIDER_DEFAULTS.backend.baseUrl || "";
-  const model = providerConfig.model;
+  const backendBaseUrl = backendUrlInput.value.trim() || providerConfig.defaultBaseUrl;
+  const model = providerConfig.defaultModel;
 
   if (!taskRequest) {
     setStatus("Enter a task request first.", true);
@@ -244,7 +222,7 @@ async function startGuidedTaskMode(): Promise<void> {
   try {
     const settings: Record<string, string> = {
       [GUIDE_STORAGE_KEYS.provider]: provider,
-      [PROVIDER_DEFAULTS.backend.baseUrlStorageKey as string]: backendBaseUrl
+      [providerConfig.backendBaseUrlStorageKey]: backendBaseUrl
     };
     await chrome.storage.local.set(settings);
 
@@ -325,7 +303,7 @@ async function startGuideWithTaskRequest({
   history = []
 }: StartGuideRequest): Promise<void> {
   setBusy(true, "Planning guide...");
-  setStatus(`Creating guidance with ${PROVIDER_DISPLAY_LABELS[provider] || "Model"}...`);
+  setStatus(`Creating guidance with ${getProviderConfig(provider).displayLabel}...`);
   const response = await chrome.runtime.sendMessage({
     type: "BRIDGE_START_GUIDE",
     tabId,

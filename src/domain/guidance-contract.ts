@@ -74,6 +74,10 @@ const SENSITIVE_VALUE_KEYS = new Set([
 ]);
 
 const URL_KEYS = new Set(["url", "canonicalUrl", "href"]);
+const EXTENSION_ACTOR_PATTERN =
+  /\b(?:bridge|extension|assistant|agent|model|ai|system|we|i)\b[\s\S]{0,48}\b(?:click|type|enter|submit|purchase|buy|delete|remove|confirm|press|choose|select|fill|send)\b/i;
+const HIGH_RISK_ACTION_PATTERN =
+  /\b(?:checkout|payment|pay|purchase|buy|order|confirm purchase|credit card|card number|cvv|ssn|social security|personal information|personal info|password|home address|address|phone number|date of birth|birth date|delete account|remove account|delete|destructive|irreversible)\b/i;
 
 export function normalizeGuidancePlanMode(mode: unknown): GuidancePlanMode {
   return isGuidancePlanMode(mode) ? mode : GUIDANCE_PLAN_MODES.REFRESH;
@@ -169,6 +173,39 @@ export function validateGuidancePlan(
     assumptions,
     steps: plan.steps.map((step, index) => normalizeGuidanceStep(step, index))
   };
+}
+
+export function validateGuideOnlyPolicy(
+  plan: GuidancePlanDecision
+): GuidancePlanDecision {
+  if (plan.status === "needsClarification") return plan;
+
+  return {
+    ...plan,
+    steps: plan.steps.map((step, index) => validateGuideOnlyStep(step, index))
+  };
+}
+
+function validateGuideOnlyStep(step: GuidanceStep, index: number): GuidanceStep {
+  const policyText = [
+    step.title,
+    step.instruction,
+    step.target?.label,
+    step.target?.text,
+    step.target?.placeholder
+  ].join(" ");
+
+  if (EXTENSION_ACTOR_PATTERN.test(policyText)) {
+    throw new Error(
+      `Guide-Only policy violation in step ${index + 1}: the extension must not perform page actions for the user.`
+    );
+  }
+
+  if (step.risk !== "high" && HIGH_RISK_ACTION_PATTERN.test(policyText)) {
+    return { ...step, risk: "high" };
+  }
+
+  return step;
 }
 
 function normalizeGuidanceStep(step: unknown, index: number): GuidanceStep {

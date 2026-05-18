@@ -257,7 +257,7 @@ Bridge equivalent:
 ## Concrete Next Work
 
 1. Keep provider configuration aligned.
-   - Maintain Backend Proxy labels across README, side panel UI, side panel defaults, and `PROVIDER_CONFIG`.
+   - Maintain Backend Proxy labels across README, side panel UI, side panel defaults, and the provider registry.
    - Keep provider-specific credentials and model defaults behind the backend before adding another provider.
 
 2. Follow the model provider architecture note.

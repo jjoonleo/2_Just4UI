@@ -49,6 +49,7 @@ Each provider adapter owns:
 - Provider label and user-facing error text.
 - Default model.
 - Credential lookup.
+- Planning Payload safety before the provider call.
 - Request body construction.
 - Structured-output or JSON-schema configuration.
 - Response text extraction.
@@ -60,6 +61,7 @@ The orchestration layer owns:
 - Planning Payload reduction.
 - Completed Step History rules.
 - Plan Contract validation.
+- Guide-Only policy validation after Plan Contract validation.
 - Risk Gate rules.
 - Session persistence and refresh.
 - Overlay rendering.

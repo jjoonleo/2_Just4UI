@@ -1,5 +1,10 @@
 // @ts-nocheck
-export {};
+import {
+  compactClarificationHistory,
+  createBackendProviderPlan
+} from "../../providers/backend-provider";
+import { validateGuideOnlyPolicy } from "../../domain/guidance-contract";
+import { getProviderConfig, normalizeProviderId } from "../../providers/provider-registry";
 
 const SESSION_STORAGE_KEY = "bridgeGuidanceSessions";
 const ACTIVITY_STORAGE_KEY = "bridgeGuidanceActivity";
@@ -12,14 +17,6 @@ const GUIDANCE_PLAN_MODES = {
   INITIAL: "initial",
   REFRESH: "refresh",
   CONTINUE_AFTER_WINDOW_ENDED: "continueAfterWindowEnded",
-};
-const PROVIDER_CONFIG = {
-  backend: {
-    backendBaseUrlStorageKey: "bridgeBackendBaseUrl",
-    defaultBaseUrl: "http://localhost:8787",
-    defaultModel: "backend-proxy",
-    label: "Backend Proxy",
-  },
 };
 const pageStateRefreshes = new Map();
 
@@ -112,7 +109,7 @@ async function startGuide({
   clarificationHistory = [],
 }) {
   const modelProvider = normalizeProvider(provider);
-  const providerConfig = PROVIDER_CONFIG[modelProvider];
+  const providerConfig = getProviderConfig(modelProvider);
 
   try {
     await setGuideActivity({
@@ -129,10 +126,11 @@ async function startGuide({
 
     const snapshot = await extractSnapshotFromTab(tabId);
     const planningPayload = createPlanningPayload(snapshot);
+    const currentPageTargetRegistry = createCurrentPageTargetRegistry(snapshot);
 
     await setGuideActivity({
       phase: "askingAi",
-      message: `Asking ${providerConfig.label}`,
+      message: `Asking ${providerConfig.displayLabel}`,
       taskRequest,
     });
 
@@ -173,6 +171,7 @@ async function startGuide({
       taskRequest: planDecision.clarifiedTaskRequest,
       model: selectedModel,
       plan: toGuidancePlan(planDecision),
+      currentPageTargetRegistry,
       currentStepIndex: 0,
       completedStepSummaries: [],
       completedStepHistory: [],
@@ -301,7 +300,7 @@ async function refreshHostTab(tabId, message = "", options = {}) {
 
   try {
     const modelProvider = normalizeProvider(initialSession.provider);
-    const providerConfig = PROVIDER_CONFIG[modelProvider];
+    const providerConfig = getProviderConfig(modelProvider);
     const backendBaseUrl = await getBackendBaseUrl(providerConfig);
 
     await removeOverlayFromTab(tabId);
@@ -316,14 +315,15 @@ async function refreshHostTab(tabId, message = "", options = {}) {
 
     const snapshot = await extractSnapshotFromTab(tabId);
     const planningPayload = createPlanningPayload(snapshot);
+    const currentPageTargetRegistry = createCurrentPageTargetRegistry(snapshot);
     const session = await getActiveSession();
     if (!session || session.hostTabId !== tabId) return;
 
     await setGuideActivity({
       phase: "askingAi",
       message: isPageStateRefresh
-        ? `Asking ${providerConfig.label} for updated guidance`
-        : `Asking ${providerConfig.label}`,
+        ? `Asking ${providerConfig.displayLabel} for updated guidance`
+        : `Asking ${providerConfig.displayLabel}`,
       taskRequest: session.taskRequest,
     });
 
@@ -375,6 +375,7 @@ async function refreshHostTab(tabId, message = "", options = {}) {
         session,
         toGuidancePlan(refreshedPlanDecision),
       ),
+      currentPageTargetRegistry,
       currentStepIndex: 0,
       status: "active",
       pendingClarification: null,
@@ -771,6 +772,11 @@ async function extractSnapshotFromTab(tabId) {
 async function renderOverlay(tabId, session, message = "") {
   await chrome.scripting.executeScript({
     target: { tabId },
+    files: ["dist/target-matching.js"],
+  });
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
     func: installGuidedTaskOverlay,
     args: [
       session.plan,
@@ -778,6 +784,7 @@ async function renderOverlay(tabId, session, message = "") {
         currentStepIndex: session.currentStepIndex || 0,
         message,
         autoRefreshPaused: Boolean(session.autoRefreshPaused),
+        targetRegistry: session.currentPageTargetRegistry || [],
       },
     ],
   });
@@ -1138,8 +1145,7 @@ function compactContinuationTarget(target = {}) {
 }
 
 function normalizeProvider(provider) {
-  if (provider !== "backend") return "backend";
-  return "backend";
+  return normalizeProviderId(provider);
 }
 
 async function getBackendBaseUrl(providerConfig) {
@@ -1149,7 +1155,8 @@ async function getBackendBaseUrl(providerConfig) {
   const backendBaseUrl =
     stringOrNull(stored[providerConfig.backendBaseUrlStorageKey]) ||
     providerConfig.defaultBaseUrl;
-  if (!backendBaseUrl) throw new Error(`${providerConfig.label} URL is missing.`);
+  if (!backendBaseUrl)
+    throw new Error(`${providerConfig.displayLabel} URL is missing.`);
   return backendBaseUrl;
 }
 
@@ -1233,6 +1240,37 @@ function createPlanningPayload(snapshot) {
   });
 }
 
+function createCurrentPageTargetRegistry(snapshot) {
+  const content = snapshot.content || {};
+  const targets = [];
+
+  for (const item of content.interactiveElements || []) {
+    targets.push(compactTargetRegistryItem(item));
+  }
+
+  for (const form of content.forms || []) {
+    targets.push(compactTargetRegistryItem(form));
+    for (const field of form.fields || []) {
+      targets.push(compactTargetRegistryItem(field));
+    }
+  }
+
+  return targets.filter((target) => target.snapshotId && target.selector);
+}
+
+function compactTargetRegistryItem(item = {}) {
+  return compactObject({
+    snapshotId: item.snapshotId,
+    selector: item.selector,
+    role: item.role,
+    label: item.label,
+    text: item.text,
+    href: item.href,
+    name: item.name,
+    placeholder: item.placeholder,
+  });
+}
+
 async function createGuidancePlan({
   mode = GUIDANCE_PLAN_MODES.INITIAL,
   provider,
@@ -1244,7 +1282,7 @@ async function createGuidancePlan({
 }) {
   const normalizedMode = normalizeGuidancePlanMode(mode);
   if (provider !== "backend") throw new Error("Only Backend Proxy is supported.");
-  return createBackendGuidancePlan({
+  const providerPlan = await createBackendProviderPlan({
     mode: normalizedMode,
     backendBaseUrl,
     taskRequest,
@@ -1252,6 +1290,9 @@ async function createGuidancePlan({
     previousSession,
     clarificationHistory,
   });
+  return validateGuideOnlyPolicy(
+    validateGuidancePlan(providerPlan, taskRequest, normalizedMode),
+  );
 }
 
 function normalizeGuidancePlanMode(mode) {
@@ -1262,54 +1303,6 @@ function normalizeGuidancePlanMode(mode) {
 
 function maxStepsForGuidancePlanMode(mode) {
   return mode === GUIDANCE_PLAN_MODES.REFRESH ? 8 : 2;
-}
-
-async function createBackendGuidancePlan({
-  mode,
-  backendBaseUrl,
-  taskRequest,
-  planningPayload,
-  previousSession,
-  clarificationHistory,
-}) {
-  const endpoint = `${normalizeBackendBaseUrl(backendBaseUrl)}/guidance-plan`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contractVersion: 1,
-      mode,
-      taskRequest,
-      planningPayload,
-      previousSession,
-      clarificationHistory: compactClarificationHistory(clarificationHistory),
-    }),
-  });
-
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(
-      data?.error || `Backend Proxy request failed with HTTP ${response.status}.`,
-    );
-  }
-  return validateGuidancePlan(data, taskRequest, mode);
-}
-
-function normalizeBackendBaseUrl(baseUrl) {
-  const trimmed = String(baseUrl || "").trim().replace(/\/+$/, "");
-  if (!trimmed) throw new Error("Backend Proxy URL is missing.");
-  return trimmed;
-}
-
-function compactClarificationHistory(history) {
-  return (Array.isArray(history) ? history : []).slice(-6).map((item) =>
-    compactObject({
-      question: stringOrNull(item?.question),
-      answer: stringOrNull(item?.answer),
-    }),
-  );
 }
 
 function createClarificationPayload(planDecision, history = []) {
@@ -2283,6 +2276,12 @@ function installGuidedTaskOverlay(plan, options = {}) {
   }
 
   function resolveTarget(target) {
+    const matcher = window.__bridgeTargetMatching?.resolvePageTarget;
+    if (typeof matcher === "function") {
+      const matched = matcher(target || {}, createTargetCandidates(target || {}));
+      if (matched) return matched;
+    }
+
     const bySelector = findBySelector(target.selector);
     if (bySelector) return bySelector;
     const candidates = Array.from(
@@ -2302,11 +2301,60 @@ function installGuidedTaskOverlay(plan, options = {}) {
     return best;
   }
 
+  function createTargetCandidates(target) {
+    const candidates = [];
+
+    for (const item of options.targetRegistry || []) {
+      const element = findBySelector(item.selector);
+      if (element) candidates.push(createTargetCandidate(element, item));
+    }
+
+    const selectorElement = findBySelector(target.selector);
+    if (selectorElement) {
+      candidates.push(
+        createTargetCandidate(selectorElement, { selector: target.selector }),
+      );
+    }
+
+    Array.from(
+      document.querySelectorAll(
+        "a[href],button,input,select,textarea,summary,[role],[tabindex]:not([tabindex='-1']),h1,h2,h3,h4,h5,h6,p,li,label",
+      ),
+    )
+      .filter((element) => isVisible(element) && !isBridgeElement(element))
+      .forEach((element) => candidates.push(createTargetCandidate(element)));
+
+    return candidates;
+  }
+
+  function createTargetCandidate(element, overrides = {}) {
+    return {
+      element,
+      snapshotId: overrides.snapshotId || null,
+      selector: overrides.selector || getCssPath(element),
+      role: overrides.role || getRole(element),
+      label: overrides.label || getAccessibleName(element),
+      text: overrides.text || getElementText(element),
+      href:
+        overrides.href ||
+        (element instanceof HTMLAnchorElement ? element.href : null),
+      name: overrides.name || element.getAttribute("name"),
+      placeholder:
+        overrides.placeholder ||
+        (element.matches("input,select,textarea")
+          ? element.getAttribute("placeholder")
+          : null),
+      visible: isVisible(element),
+    };
+  }
+
   function findBySelector(selector) {
     if (!selector) return null;
     try {
       const element = document.querySelector(selector);
-      return element && isVisible(element) ? element : null;
+      return element && isVisible(element) && !isBridgeElement(element)
+        ? element
+        : null;
     } catch {
       return null;
     }
@@ -2554,6 +2602,34 @@ function installGuidedTaskOverlay(plan, options = {}) {
     return String(element?.innerText || element?.textContent || "")
       .replace(/\s+/g, " ")
       .trim();
+  }
+
+  function getCssPath(element) {
+    if (!element || element.nodeType !== Node.ELEMENT_NODE) return null;
+    if (element.id) return `#${cssEscape(element.id)}`;
+    const parts = [];
+    let current = element;
+    while (
+      current &&
+      current.nodeType === Node.ELEMENT_NODE &&
+      current !== document.documentElement
+    ) {
+      let part = current.tagName.toLowerCase();
+      const classNames = Array.from(current.classList).slice(0, 2);
+      if (classNames.length) part += `.${classNames.map(cssEscape).join(".")}`;
+      const parent = current.parentElement;
+      if (parent) {
+        const sameTagSiblings = Array.from(parent.children).filter(
+          (child) => child.tagName === current.tagName,
+        );
+        if (sameTagSiblings.length > 1)
+          part += `:nth-of-type(${sameTagSiblings.indexOf(current) + 1})`;
+      }
+      parts.unshift(part);
+      if (parts.length >= 5) break;
+      current = parent;
+    }
+    return parts.join(" > ");
   }
 
   function includesEither(left, right) {

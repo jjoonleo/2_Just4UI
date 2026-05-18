@@ -14,6 +14,46 @@ await build({
 });
 
 await build({
+  entryPoints: ["src/providers/provider-registry.ts"],
+  outfile: "dist/providers/provider-registry.mjs",
+  bundle: true,
+  format: "esm",
+  platform: "neutral",
+  target: "es2022",
+  sourcemap: true
+});
+
+await build({
+  entryPoints: ["src/providers/backend-provider.ts"],
+  outfile: "dist/providers/backend-provider.mjs",
+  bundle: true,
+  format: "esm",
+  platform: "neutral",
+  target: "es2022",
+  sourcemap: true
+});
+
+await build({
+  entryPoints: ["src/extension/content/target-matching.ts"],
+  outfile: "dist/extension/content/target-matching.mjs",
+  bundle: true,
+  format: "esm",
+  platform: "neutral",
+  target: "es2022",
+  sourcemap: true
+});
+
+await build({
+  entryPoints: ["src/extension/content/target-matching-global.ts"],
+  outfile: "dist/target-matching.js",
+  bundle: true,
+  format: "iife",
+  platform: "browser",
+  target: "chrome120",
+  sourcemap: true
+});
+
+await build({
   entryPoints: ["src/backend/server.ts"],
   outfile: "dist/backend/server.cjs",
   bundle: true,
