@@ -143,8 +143,6 @@ Recommended modules:
 
 - `provider.ts`
 - `backend-provider.ts`
-- `gemini-provider.ts`
-- `openai-provider.ts`
 
 ### `src/shared/`
 

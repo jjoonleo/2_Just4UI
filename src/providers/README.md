@@ -6,7 +6,5 @@ Expected modules:
 
 - `provider.ts` for the shared provider interface.
 - `backend-provider.ts` for the Backend Proxy path.
-- `gemini-provider.ts` for the Gemini Demo path.
-- `openai-provider.ts` for the OpenAI Demo path.
 
 Providers return Plan Contract JSON only. They do not own Guidance Session lifecycle, overlay rendering, or page extraction.

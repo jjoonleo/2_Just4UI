@@ -14,7 +14,7 @@ Sources used:
 Bridge is a Chrome Manifest V3 side-panel extension for guide-only page assistance. The root extension is loaded from the repo root and uses:
 
 - `manifest.json` for side panel, background service worker, `activeTab`, `scripting`, `sidePanel`, `storage`, and `tabs` permissions.
-- `src/extension/sidepanel/sidepanel.html` and `src/extension/sidepanel/main.ts` for the user-facing session dashboard, API key entry, task request entry, clarification answers, auto-refresh toggle, and end-guide action.
+- `src/extension/sidepanel/sidepanel.html` and `src/extension/sidepanel/main.ts` for the user-facing session dashboard, Backend Proxy URL entry, task request entry, clarification answers, auto-refresh toggle, and end-guide action.
 - `src/extension/service-worker/main.ts` as the source of truth for session lifecycle, page extraction, model requests, plan validation, overlay injection, page-state refresh, and tab/window movement.
 - `CONTEXT.md` as the domain language source for Page Snapshot, Planning Payload, Guidance Session, Guide-Only Assistance, Plan Refresh, Risk Gate, and Completed Step History.
 
@@ -22,20 +22,20 @@ The runtime flow is:
 
 1. User opens a normal `http://` or `https://` page.
 2. User opens the extension side panel.
-3. User chooses Backend Proxy, Gemini Demo, or OpenAI Demo, then enters the matching backend URL or demo API key and a task request.
+3. User enters the Backend Proxy URL and a task request.
 4. `src/extension/sidepanel/main.ts` sends `BRIDGE_START_GUIDE` to `src/extension/service-worker/main.ts`.
 5. `src/extension/service-worker/main.ts` injects `collectPageSnapshotForGuide()` into the active tab.
 6. The snapshot is reduced by `createPlanningPayload()` so the model receives selected page metadata, viewport data, headings, landmarks, interactive elements, form metadata, links, and selected text blocks.
-7. `createGuidancePlan()` calls the selected provider: Backend Proxy, Gemini, or OpenAI, and asks for a strict Guidance Plan JSON contract.
+7. `createGuidancePlan()` calls the Backend Proxy and asks for a strict Guidance Plan JSON contract.
 8. `validateGuidancePlan()` enforces `ready` vs `needsClarification`, step caps by planner mode, required step fields, normalized targets, completion metadata, and risk level.
 9. The extension injects an overlay into the original page. It highlights and explains but does not click, type, submit, purchase, delete, or confirm.
 10. A single Guidance Session follows the active tab inside one browser window. Navigation, active-tab changes, tab close handoffs, and meaningful page-state changes trigger refresh or pause behavior.
 
 Current provider state:
 
-- `src/extension/sidepanel/sidepanel.html` exposes Backend Proxy, Gemini Demo, and OpenAI Demo provider options.
-- `src/extension/sidepanel/main.ts` normalizes those provider IDs and defaults unknown values to Backend Proxy.
-- `src/extension/service-worker/main.ts` contains matching provider configuration for Backend Proxy, Gemini, and OpenAI.
+- `src/extension/sidepanel/sidepanel.html` exposes only Backend Proxy URL setup.
+- `src/extension/sidepanel/main.ts` normalizes older provider values to Backend Proxy.
+- `src/extension/service-worker/main.ts` contains Backend Proxy provider configuration only.
 - `src/backend/server.ts` provides the current Backend Proxy path for Codex plan creation, with dependency-light tests in `backend/server.test.js`.
 
 ## Hermes Features Related To Bridge
@@ -228,8 +228,7 @@ Bridge equivalent:
    - Test side-panel state, overlay rendering, target highlighting, console errors, and navigation refresh.
 
 3. Add a formal provider boundary.
-   - Normalize provider labels, model defaults, request construction, JSON schema usage, and error formatting.
-   - Fix the current OpenAI/Gemini label drift before adding more provider work.
+   - Keep request construction, response parsing, and error formatting behind the Backend Proxy path.
    - Use `docs/model-provider-architecture.md` as the Bridge-specific provider design note.
 
 4. Strengthen mechanical safety.
@@ -258,8 +257,8 @@ Bridge equivalent:
 ## Concrete Next Work
 
 1. Keep provider configuration aligned.
-   - Maintain Backend Proxy, Gemini Demo, and OpenAI Demo labels across README, side panel UI, side panel defaults, and `PROVIDER_CONFIG`.
-   - Keep provider-specific credentials and model defaults behind a small adapter boundary before adding another provider.
+   - Maintain Backend Proxy labels across README, side panel UI, side panel defaults, and `PROVIDER_CONFIG`.
+   - Keep provider-specific credentials and model defaults behind the backend before adding another provider.
 
 2. Follow the model provider architecture note.
    - Keep the extension responsible for Guidance Session orchestration, Planning Payload creation, Plan Contract validation, and overlay rendering.

@@ -17,7 +17,7 @@ Preserve these privacy boundaries:
 - Do not include user-entered form values in page snapshots or planning payloads.
 - Do not send full raw DOM or screenshots to a model unless the user explicitly asks for a visual mode.
 - Do not hardcode or commit API keys.
-- Extension-side API key storage is acceptable only for local demo work; real release work should use a backend proxy.
+- Keep provider credentials outside the extension; use the backend proxy path for model calls.
 
 Guided Task Mode has one active guidance session. It follows the active tab inside the same Chrome window, refreshes guidance on meaningful page/navigation changes, and keeps completed step history immutable.
 

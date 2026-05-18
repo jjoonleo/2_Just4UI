@@ -162,7 +162,7 @@ Many extracted objects share these fields.
 | Understand page layout | `content.landmarks`, `bounds`, `viewport`, `visualSnapshot` |
 | Find accessibility labels | `label`, `role`, `describedBy`, `alt` |
 | Detect confusing forms | `content.forms`, `fields[].label`, `fields[].required`, `fields[].placeholder` |
-| Prepare Gemini input later | Prefer `page`, `viewport`, `headings`, `landmarks`, `interactiveElements`, `forms`, and selected `textBlocks`; avoid sending the full screenshot unless needed. |
+| Prepare planning input later | Prefer `page`, `viewport`, `headings`, `landmarks`, `interactiveElements`, `forms`, and selected `textBlocks`; avoid sending the full screenshot unless needed. |
 
 ## Notes For Future Cleanup
 

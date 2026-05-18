@@ -403,13 +403,13 @@ textarea {
   gap: 8px;
 }
 
-#clearKeyButton {
+#resetUrlButton {
   border-color: var(--line);
   background: #ffffff;
   color: var(--text);
 }
 
-#clearKeyButton:hover:not(:disabled) {
+#resetUrlButton:hover:not(:disabled) {
   border-color: var(--accent);
   background: #eef6fd;
 }

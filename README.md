@@ -13,16 +13,15 @@ npm run build
 
 1. Open a normal `http://` or `https://` page.
 2. Open the extension side panel.
-3. Choose **Backend Proxy**, **Gemini Demo**, or **OpenAI Demo** from **Provider**.
-4. For **Backend Proxy**, enter the backend URL. For demo providers, paste the matching API key.
-5. Enter a task such as `Find the return policy` or `Help me buy this item with quantity 2`.
-6. Click **Start guide**.
+3. Enter the Backend Proxy URL.
+4. Enter a task such as `Find the return policy` or `Help me buy this item with quantity 2`.
+5. Click **Start guide**.
 
-The extension collects a reduced planning payload, calls the selected plan-creation provider, validates the returned Guidance Plan JSON, and injects a guide overlay into the original page. The default **Backend Proxy** provider sends the planning request to a local backend that can call Codex using read-only Codex CLI credentials. The **Gemini Demo** provider calls Gemini `generateContent` with `responseMimeType: "application/json"` and `responseJsonSchema`; **OpenAI Demo** calls the OpenAI Responses API with structured JSON output. The overlay highlights targets and explains each step, but it does not click, type, submit, purchase, delete, or confirm for the user.
+The extension collects a reduced planning payload, calls the **Backend Proxy** plan-creation provider, validates the returned Guidance Plan JSON, and injects a guide overlay into the original page. The backend proxy can call Codex using read-only Codex CLI credentials while keeping provider credentials out of the extension. The overlay highlights targets and explains each step, but it does not click, type, submit, purchase, delete, or confirm for the user.
 
 Guidance sessions follow one active tab in the same browser window. If the user navigates, switches to another tab in that window, or closes the current guide tab while another tab remains active, the background service worker collects fresh page evidence, asks the selected provider to refresh the plan using the original task and recent progress, removes the old overlay, and restores the guide on the new host tab. Unsupported pages pause the session without keeping a stale overlay; a second refresh failure, closing the session window, explicitly ending the guide, replacing it with a new guide, or a stale 30-minute session expires it.
 
-Prototype limitation: demo provider API keys are stored in `chrome.storage.local` and used directly by the extension. This is acceptable only for local demo work. The backend proxy path stores only the backend URL in extension storage; provider credentials remain outside the extension.
+The extension stores only the backend URL in `chrome.storage.local`; provider credentials remain outside the extension.
 
 ## Backend Proxy
 
@@ -70,7 +69,3 @@ npm run build
 ## Architecture
 
 Bridge source is organized by Chrome extension runtime boundary under `src/`. See `docs/chrome-extension-architecture.md` for the folder map, dependency rules, and the expected refactor path for the MV3 service worker.
-
-## Gemini API Key Troubleshooting
-
-If Gemini returns `Requests to this API generativelanguage.googleapis.com method ... GenerateContent are blocked`, the pasted key is not allowed to call the Gemini Developer API. Create a Gemini API key from Google AI Studio, or update the key in Google Cloud Console so its API restrictions allow **Generative Language API** (`generativelanguage.googleapis.com`). If you changed API settings moments ago, wait a few minutes and retry.

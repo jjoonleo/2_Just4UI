@@ -20,16 +20,6 @@ const PROVIDER_CONFIG = {
     defaultModel: "backend-proxy",
     label: "Backend Proxy",
   },
-  gemini: {
-    apiKeyStorageKey: "bridgeGeminiApiKey",
-    defaultModel: "gemini-2.5-flash",
-    label: "Gemini",
-  },
-  openai: {
-    apiKeyStorageKey: "bridgeOpenAiApiKey",
-    defaultModel: "gpt-5.4-mini",
-    label: "OpenAI",
-  },
 };
 const pageStateRefreshes = new Map();
 
@@ -131,7 +121,7 @@ async function startGuide({
       taskRequest,
     });
 
-    const providerCredential = await getProviderCredential(providerConfig);
+    const backendBaseUrl = await getBackendBaseUrl(providerConfig);
 
     const tab = await chrome.tabs.get(tabId);
     if (tab.windowId == null)
@@ -150,8 +140,7 @@ async function startGuide({
     const planDecision = await createGuidancePlan({
       mode: GUIDANCE_PLAN_MODES.INITIAL,
       provider: modelProvider,
-      apiKey: providerCredential.apiKey,
-      backendBaseUrl: providerCredential.backendBaseUrl,
+      backendBaseUrl,
       model: selectedModel,
       taskRequest,
       planningPayload,
@@ -313,7 +302,7 @@ async function refreshHostTab(tabId, message = "", options = {}) {
   try {
     const modelProvider = normalizeProvider(initialSession.provider);
     const providerConfig = PROVIDER_CONFIG[modelProvider];
-    const providerCredential = await getProviderCredential(providerConfig);
+    const backendBaseUrl = await getBackendBaseUrl(providerConfig);
 
     await removeOverlayFromTab(tabId);
 
@@ -341,8 +330,7 @@ async function refreshHostTab(tabId, message = "", options = {}) {
     const refreshedPlanDecision = await createGuidancePlan({
       mode: options.mode || GUIDANCE_PLAN_MODES.REFRESH,
       provider: modelProvider,
-      apiKey: providerCredential.apiKey,
-      backendBaseUrl: providerCredential.backendBaseUrl,
+      backendBaseUrl,
       model: providerConfig.defaultModel,
       taskRequest: session.taskRequest,
       planningPayload,
@@ -1150,28 +1138,19 @@ function compactContinuationTarget(target = {}) {
 }
 
 function normalizeProvider(provider) {
-  if (provider === "openai") return "openai";
-  if (provider === "gemini") return "gemini";
+  if (provider !== "backend") return "backend";
   return "backend";
 }
 
-async function getProviderCredential(providerConfig) {
-  if (providerConfig.backendBaseUrlStorageKey) {
-    const stored = await chrome.storage.local.get(
-      providerConfig.backendBaseUrlStorageKey,
-    );
-    const backendBaseUrl =
-      stringOrNull(stored[providerConfig.backendBaseUrlStorageKey]) ||
-      providerConfig.defaultBaseUrl;
-    if (!backendBaseUrl)
-      throw new Error(`${providerConfig.label} URL is missing.`);
-    return { backendBaseUrl };
-  }
-
-  const stored = await chrome.storage.local.get(providerConfig.apiKeyStorageKey);
-  const apiKey = stored[providerConfig.apiKeyStorageKey];
-  if (!apiKey) throw new Error(`${providerConfig.label} API key is missing.`);
-  return { apiKey };
+async function getBackendBaseUrl(providerConfig) {
+  const stored = await chrome.storage.local.get(
+    providerConfig.backendBaseUrlStorageKey,
+  );
+  const backendBaseUrl =
+    stringOrNull(stored[providerConfig.backendBaseUrlStorageKey]) ||
+    providerConfig.defaultBaseUrl;
+  if (!backendBaseUrl) throw new Error(`${providerConfig.label} URL is missing.`);
+  return backendBaseUrl;
 }
 
 function createPlanningPayload(snapshot) {
@@ -1257,40 +1236,17 @@ function createPlanningPayload(snapshot) {
 async function createGuidancePlan({
   mode = GUIDANCE_PLAN_MODES.INITIAL,
   provider,
-  apiKey,
   backendBaseUrl,
-  model,
   taskRequest,
   planningPayload,
   previousSession,
   clarificationHistory = [],
 }) {
   const normalizedMode = normalizeGuidancePlanMode(mode);
-  if (provider === "backend") {
-    return createBackendGuidancePlan({
-      mode: normalizedMode,
-      backendBaseUrl,
-      taskRequest,
-      planningPayload,
-      previousSession,
-      clarificationHistory,
-    });
-  }
-  if (provider === "openai") {
-    return createOpenAiGuidancePlan({
-      mode: normalizedMode,
-      apiKey,
-      model,
-      taskRequest,
-      planningPayload,
-      previousSession,
-      clarificationHistory,
-    });
-  }
-  return createGeminiGuidancePlan({
+  if (provider !== "backend") throw new Error("Only Backend Proxy is supported.");
+  return createBackendGuidancePlan({
     mode: normalizedMode,
-    apiKey,
-    model,
+    backendBaseUrl,
     taskRequest,
     planningPayload,
     previousSession,
@@ -1306,155 +1262,6 @@ function normalizeGuidancePlanMode(mode) {
 
 function maxStepsForGuidancePlanMode(mode) {
   return mode === GUIDANCE_PLAN_MODES.REFRESH ? 8 : 2;
-}
-
-function guidancePlannerPromptLines(mode) {
-  return [
-    ...guidancePlannerBasePromptLines(),
-    ...guidancePlannerModePromptLines(mode),
-  ];
-}
-
-function guidancePlannerBasePromptLines() {
-  return [
-    "Create a guide-only browser assistance plan.",
-    "Return only JSON that follows the provided schema.",
-    "Return status=ready with a progressive plan window when the next useful target/action is clear.",
-    "Return status=needsClarification, one direct question, and no steps only when ambiguity changes which page target or action should be guided next.",
-    "Do not ask clarification for missing values that the user can type into an identifiable input field; highlight the field instead.",
-    "Do not ask clarification for equivalent duplicate targets; choose the visible primary target.",
-    "Return only the active generated window from the current point, not the whole plan or completed history.",
-    "Use the planner mode to decide how many not-yet-completed steps belong in the active generated window.",
-    "Do not generate the full workflow upfront.",
-    "Do not rewrite completed steps from previousSession. Only add or revise not-yet-reached guidance.",
-    "Completed steps are immutable locked history: do not modify, rename, reorder, reinterpret, remove, downgrade, or return them as current or not-completed.",
-    "Use previousSession.planSoFar, previousSession.completedStepHistory, previousSession.currentStep, and previousSession.aheadSteps to understand what has already been guided.",
-    "Do not duplicate any completed step, current step, or ahead step unless the current page evidence proves the user must repeat it.",
-    "Keep the plan compact: one short summary and at most 3 assumptions.",
-    "Never ask the extension to click, type, submit, purchase, delete, or confirm for the user.",
-    "Each step must point to one primary target from the current planning payload.",
-    "For clickable targets such as buttons and links, use completion.type=click so a user click can mark the step completed before navigation.",
-    "Use completion.type=manual only when no reliable page event can indicate that the user completed the step.",
-    "Do not add fields or instructions that mark the user's task as complete. The user decides whether to ask for another step or end the guide.",
-    "Use risk=high for checkout, payment, personal information submission, account deletion, or destructive actions.",
-    "Treat clarificationHistory answers as authoritative.",
-    "Use empty strings for unknown optional target or completion fields.",
-  ];
-}
-
-function guidancePlannerModePromptLines(mode) {
-  if (mode === GUIDANCE_PLAN_MODES.INITIAL) {
-    return [
-      "Planner mode: initial.",
-      "Create the first current step for this task from the current page evidence.",
-      "Optionally include one future preview step only if it is clearly useful from the current page evidence.",
-      "Return at most 2 steps: the current actionable step plus one optional preview step.",
-      "There is no completed history for this first guide unless clarificationHistory says otherwise.",
-    ];
-  }
-
-  if (mode === GUIDANCE_PLAN_MODES.CONTINUE_AFTER_WINDOW_ENDED) {
-    return [
-      "Planner mode: continueAfterWindowEnded.",
-      "The visible generated window is exhausted because the user requested another step.",
-      "Return only additions after completed history.",
-      "Do not reinterpret, reorder, rewrite, or repeat completed steps.",
-      "Completed steps are locked and non-editable in this mode; any returned step matching completed history is invalid.",
-      "Do not return any completed, current, or already-previewed step from previousSession.",
-      "When adding a next step, choose the first useful step after the completed history and the existing plan window.",
-      "Return at most 2 steps: the next actionable addition plus one optional preview addition.",
-      "If no new useful step can be identified, ask one clarification question instead of repeating prior steps.",
-    ];
-  }
-
-  return [
-    "Planner mode: refresh.",
-    "Use current page evidence to repair stale future/current guidance.",
-    "Do not treat refresh as a request to restart the guide.",
-    "Strictly preserve completed steps from previousSession exactly; never modify or return them.",
-    "Preserve session progress and continue from the active tab's current page evidence.",
-    "Return all task-relevant not-yet-completed steps possible on the current page, up to 8 steps.",
-    "Only include steps relevant to taskRequest and current page evidence; ignore unrelated visible controls.",
-    "Only the first returned step is the current actionable step; later returned steps are future not-completed steps.",
-    "Revise only stale not-yet-completed guidance for the current page.",
-  ];
-}
-
-function guidancePlannerInput({
-  mode,
-  taskRequest,
-  previousSession,
-  clarificationHistory,
-  planningPayload,
-}) {
-  return {
-    mode,
-    taskRequest,
-    previousSession,
-    clarificationHistory: compactClarificationHistory(clarificationHistory),
-    planningPayload,
-  };
-}
-
-async function createGeminiGuidancePlan({
-  mode,
-  apiKey,
-  model,
-  taskRequest,
-  planningPayload,
-  previousSession,
-  clarificationHistory,
-}) {
-  const promptLines = guidancePlannerPromptLines(mode);
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text: [
-                  ...promptLines,
-                  "",
-                  JSON.stringify(
-                    guidancePlannerInput({
-                      mode,
-                      taskRequest,
-                      previousSession,
-                      clarificationHistory,
-                      planningPayload,
-                    }),
-                  ),
-                ].join("\n"),
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          maxOutputTokens: 8192,
-          responseMimeType: "application/json",
-          responseJsonSchema: guidancePlanSchema(mode),
-        },
-      }),
-    },
-  );
-
-  const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(formatGeminiError(data, response.status));
-
-  const rawText = extractResponseText(data);
-  if (!rawText) throw new Error("Model returned no guidance plan text.");
-  throwIfGeminiResponseWasTruncated(data, rawText);
-
-  const plan = parseModelJson(rawText, "Gemini");
-  return validateGuidancePlan(plan, taskRequest, mode);
 }
 
 async function createBackendGuidancePlan({
@@ -1490,184 +1297,10 @@ async function createBackendGuidancePlan({
   return validateGuidancePlan(data, taskRequest, mode);
 }
 
-async function createOpenAiGuidancePlan({
-  mode,
-  apiKey,
-  model,
-  taskRequest,
-  planningPayload,
-  previousSession,
-  clarificationHistory,
-}) {
-  const promptLines = guidancePlannerPromptLines(mode);
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      instructions: promptLines.join(" "),
-      input: JSON.stringify(
-        guidancePlannerInput({
-          mode,
-          taskRequest,
-          previousSession,
-          clarificationHistory,
-          planningPayload,
-        }),
-      ),
-      text: {
-        format: {
-          type: "json_schema",
-          name: "guidance_plan",
-          strict: true,
-          schema: openAiGuidancePlanSchema(mode),
-        },
-      },
-      max_output_tokens: 8192,
-    }),
-  });
-
-  const data = await response.json().catch(() => null);
-  if (!response.ok)
-    throw new Error(
-      data?.error?.message ||
-        `OpenAI request failed with HTTP ${response.status}.`,
-    );
-
-  const rawText = extractOpenAiResponseText(data);
-  if (!rawText) throw new Error("Model returned no guidance plan text.");
-
-  const plan = parseModelJson(rawText, "OpenAI");
-  return validateGuidancePlan(plan, taskRequest, mode);
-}
-
 function normalizeBackendBaseUrl(baseUrl) {
   const trimmed = String(baseUrl || "").trim().replace(/\/+$/, "");
   if (!trimmed) throw new Error("Backend Proxy URL is missing.");
   return trimmed;
-}
-
-function throwIfGeminiResponseWasTruncated(data, rawText) {
-  const truncated = (data?.candidates || []).some(
-    (candidate) => candidate.finishReason === "MAX_TOKENS",
-  );
-  if (!truncated) return;
-
-  throw new Error(
-    `Gemini returned truncated JSON before the plan was complete. Try again, switch to a model with a larger output limit, or use a shorter page/task. Raw response preview: ${previewText(rawText)}`,
-  );
-}
-
-function formatGeminiError(data, status) {
-  const message =
-    data?.error?.message || `Gemini request failed with HTTP ${status}.`;
-  if (
-    /Requests to this API generativelanguage\.googleapis\.com[\s\S]*are blocked/i.test(
-      message,
-    )
-  ) {
-    return [
-      "Gemini API key is blocked from calling the Generative Language API.",
-      "Use a Gemini API key from Google AI Studio, or update this key's Google Cloud API restrictions to allow Generative Language API (generativelanguage.googleapis.com).",
-      `Original error: ${message}`,
-    ].join(" ");
-  }
-  return message;
-}
-
-function parseModelJson(rawText, providerLabel = "Model") {
-  const candidates = [
-    rawText,
-    stripMarkdownJsonFence(rawText),
-    extractFirstJsonValue(rawText),
-  ].filter(Boolean);
-
-  for (const candidate of candidates) {
-    try {
-      return JSON.parse(candidate);
-    } catch {
-      // Try the next normalized model output shape.
-    }
-  }
-
-  throw new Error(
-    `${providerLabel} returned invalid JSON. Raw response preview: ${previewText(rawText)}`,
-  );
-}
-
-function previewText(value) {
-  return (
-    String(value || "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 1200) || "(empty)"
-  );
-}
-
-function stripMarkdownJsonFence(rawText) {
-  const trimmed = rawText.trim();
-  const match = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  return match?.[1]?.trim() || null;
-}
-
-function extractFirstJsonValue(rawText) {
-  const startIndex = rawText.search(/[\[{]/);
-  if (startIndex < 0) return null;
-
-  const stack = [];
-  let inString = false;
-  let escaped = false;
-
-  for (let index = startIndex; index < rawText.length; index += 1) {
-    const character = rawText[index];
-
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (character === "\\") {
-        escaped = true;
-      } else if (character === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (character === '"') {
-      inString = true;
-    } else if (character === "{" || character === "[") {
-      stack.push(character === "{" ? "}" : "]");
-    } else if (character === "}" || character === "]") {
-      if (stack.pop() !== character) return null;
-      if (stack.length === 0)
-        return rawText.slice(startIndex, index + 1).trim();
-    }
-  }
-
-  return null;
-}
-
-function extractResponseText(response) {
-  const chunks = [];
-  for (const candidate of response?.candidates || []) {
-    for (const part of candidate.content?.parts || []) {
-      if (typeof part.text === "string") chunks.push(part.text);
-    }
-  }
-  return chunks.join("").trim();
-}
-
-function extractOpenAiResponseText(response) {
-  if (typeof response?.output_text === "string") return response.output_text;
-  const chunks = [];
-  for (const item of response?.output || []) {
-    for (const content of item.content || []) {
-      if (typeof content.text === "string") chunks.push(content.text);
-    }
-  }
-  return chunks.join("").trim();
 }
 
 function compactClarificationHistory(history) {
@@ -1845,194 +1478,6 @@ function compactObject(object) {
       ([, value]) => value !== undefined && value !== null && value !== "",
     ),
   );
-}
-
-function guidancePlanSchema(mode = GUIDANCE_PLAN_MODES.INITIAL) {
-  const maxSteps = maxStepsForGuidancePlanMode(normalizeGuidancePlanMode(mode));
-  const optionalString = { type: "string" };
-  const targetSchema = {
-    type: "object",
-    required: [
-      "snapshotId",
-      "kind",
-      "role",
-      "label",
-      "text",
-      "selector",
-      "href",
-      "name",
-      "type",
-      "placeholder",
-    ],
-    properties: {
-      snapshotId: optionalString,
-      kind: optionalString,
-      role: optionalString,
-      label: optionalString,
-      text: optionalString,
-      selector: optionalString,
-      href: optionalString,
-      name: optionalString,
-      type: optionalString,
-      placeholder: optionalString,
-    },
-  };
-  return {
-    type: "object",
-    required: [
-      "status",
-      "question",
-      "clarifiedTaskRequest",
-      "summary",
-      "assumptions",
-      "steps",
-    ],
-    properties: {
-      status: { type: "string", enum: ["needsClarification", "ready"] },
-      question: { type: "string" },
-      clarifiedTaskRequest: { type: "string" },
-      summary: { type: "string" },
-      assumptions: { type: "array", maxItems: 3, items: { type: "string" } },
-      steps: {
-        type: "array",
-        minItems: 0,
-        maxItems: maxSteps,
-        items: {
-          type: "object",
-          required: [
-            "id",
-            "title",
-            "instruction",
-            "target",
-            "completion",
-            "risk",
-          ],
-          properties: {
-            id: { type: "string" },
-            title: { type: "string" },
-            instruction: { type: "string" },
-            risk: { type: "string", enum: ["low", "medium", "high"] },
-            target: targetSchema,
-            completion: {
-              type: "object",
-              required: ["type", "value"],
-              properties: {
-                type: {
-                  type: "string",
-                  enum: [
-                    "manual",
-                    "click",
-                    "inputChanged",
-                    "inputValueEquals",
-                    "checked",
-                    "urlChanged",
-                    "dialogAppears",
-                  ],
-                },
-                value: optionalString,
-              },
-            },
-          },
-        },
-      },
-    },
-  };
-}
-
-function openAiGuidancePlanSchema(mode = GUIDANCE_PLAN_MODES.INITIAL) {
-  const maxSteps = maxStepsForGuidancePlanMode(normalizeGuidancePlanMode(mode));
-  const stringField = { type: "string" };
-  const targetSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: [
-      "snapshotId",
-      "kind",
-      "role",
-      "label",
-      "text",
-      "selector",
-      "href",
-      "name",
-      "type",
-      "placeholder",
-    ],
-    properties: {
-      snapshotId: stringField,
-      kind: stringField,
-      role: stringField,
-      label: stringField,
-      text: stringField,
-      selector: stringField,
-      href: stringField,
-      name: stringField,
-      type: stringField,
-      placeholder: stringField,
-    },
-  };
-  return {
-    type: "object",
-    additionalProperties: false,
-    required: [
-      "status",
-      "question",
-      "clarifiedTaskRequest",
-      "summary",
-      "assumptions",
-      "steps",
-    ],
-    properties: {
-      status: { type: "string", enum: ["needsClarification", "ready"] },
-      question: stringField,
-      clarifiedTaskRequest: stringField,
-      summary: stringField,
-      assumptions: { type: "array", maxItems: 3, items: stringField },
-      steps: {
-        type: "array",
-        minItems: 0,
-        maxItems: maxSteps,
-        items: {
-          type: "object",
-          additionalProperties: false,
-          required: [
-            "id",
-            "title",
-            "instruction",
-            "target",
-            "completion",
-            "risk",
-          ],
-          properties: {
-            id: stringField,
-            title: stringField,
-            instruction: stringField,
-            risk: { type: "string", enum: ["low", "medium", "high"] },
-            target: targetSchema,
-            completion: {
-              type: "object",
-              additionalProperties: false,
-              required: ["type", "value"],
-              properties: {
-                type: {
-                  type: "string",
-                  enum: [
-                    "manual",
-                    "click",
-                    "inputChanged",
-                    "inputValueEquals",
-                    "checked",
-                    "urlChanged",
-                    "dialogAppears",
-                  ],
-                },
-                value: stringField,
-              },
-            },
-          },
-        },
-      },
-    },
-  };
 }
 
 async function waitForGuidePageReady({

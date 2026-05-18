@@ -1,6 +1,6 @@
 export {};
 
-type Provider = "backend" | "gemini" | "openai";
+type Provider = "backend";
 type StoredSettings = Record<string, string | undefined>;
 type ProviderConfig = {
   label: string;
@@ -8,8 +8,6 @@ type ProviderConfig = {
   model: string;
   baseUrl?: string;
   baseUrlStorageKey?: string;
-  apiKeyStorageKey?: string;
-  modelStorageKey?: string;
 };
 type ClarificationState = {
   mode: "start" | "session";
@@ -36,12 +34,8 @@ const statusPanelEl = getElement<HTMLElement>("statusPanel");
 const loadingIndicator = getElement<HTMLElement>("loadingIndicator");
 const loadingText = getElement<HTMLElement>("loadingText");
 const statusEl = getElement<HTMLElement>("status");
-const providerSelect = getElement<HTMLSelectElement>("providerSelect");
 const backendUrlField = getElement<HTMLElement>("backendUrlField");
 const backendUrlInput = getElement<HTMLInputElement>("backendUrlInput");
-const apiKeyField = getElement<HTMLElement>("apiKeyField");
-const apiKeyLabel = getElement<HTMLElement>("apiKeyLabel");
-const apiKeyInput = getElement<HTMLInputElement>("apiKeyInput");
 const modelInput = getElement<HTMLInputElement>("modelInput");
 const taskRequestInput = getElement<HTMLTextAreaElement>("taskRequestInput");
 const clarificationPanel = getElement<HTMLElement>("clarificationPanel");
@@ -50,7 +44,7 @@ const clarificationAnswerInput = getElement<HTMLTextAreaElement>("clarificationA
 const answerClarificationButton = getElement<HTMLButtonElement>("answerClarificationButton");
 const cancelClarificationButton = getElement<HTMLButtonElement>("cancelClarificationButton");
 const startGuideButton = getElement<HTMLButtonElement>("startGuideButton");
-const clearKeyButton = getElement<HTMLButtonElement>("clearKeyButton");
+const resetUrlButton = getElement<HTMLButtonElement>("resetUrlButton");
 const sessionStatusText = getElement<HTMLElement>("sessionStatusText");
 const sessionStatusBadge = getElement<HTMLElement>("sessionStatusBadge");
 const guideActivity = getElement<HTMLElement>("guideActivity");
@@ -67,12 +61,14 @@ let currentAutoRefreshPaused = false;
 
 const GUIDE_STORAGE_KEYS = {
   provider: "bridgeModelProvider",
-  backendBaseUrl: "bridgeBackendBaseUrl",
-  geminiApiKey: "bridgeGeminiApiKey",
-  geminiModel: "bridgeGeminiModel",
-  openAiApiKey: "bridgeOpenAiApiKey",
-  openAiModel: "bridgeOpenAiModel"
+  backendBaseUrl: "bridgeBackendBaseUrl"
 };
+const DEPRECATED_STORAGE_KEYS = [
+  "bridgeGeminiApiKey",
+  "bridgeGeminiModel",
+  "bridgeOpenAiApiKey",
+  "bridgeOpenAiModel"
+];
 
 const PROVIDER_DEFAULTS: Record<Provider, ProviderConfig> = {
   backend: {
@@ -81,27 +77,11 @@ const PROVIDER_DEFAULTS: Record<Provider, ProviderConfig> = {
     model: "backend-proxy",
     baseUrl: "http://localhost:8787",
     baseUrlStorageKey: GUIDE_STORAGE_KEYS.backendBaseUrl
-  },
-  gemini: {
-    label: "Gemini API key",
-    placeholder: "AIza...",
-    model: "gemini-2.5-flash",
-    apiKeyStorageKey: GUIDE_STORAGE_KEYS.geminiApiKey,
-    modelStorageKey: GUIDE_STORAGE_KEYS.geminiModel
-  },
-  openai: {
-    label: "OpenAI API key",
-    placeholder: "sk-...",
-    model: "gpt-5.4-mini",
-    apiKeyStorageKey: GUIDE_STORAGE_KEYS.openAiApiKey,
-    modelStorageKey: GUIDE_STORAGE_KEYS.openAiModel
   }
 };
 
 const PROVIDER_DISPLAY_LABELS: Record<Provider, string> = {
-  backend: "Backend Proxy",
-  gemini: "Gemini Demo",
-  openai: "OpenAI Demo"
+  backend: "Backend Proxy"
 };
 
 let clarificationState: ClarificationState | null = null;
@@ -125,8 +105,7 @@ const SESSION_STATUS_TEXT: Record<string, string> = {
 };
 
 startGuideButton.addEventListener("click", startGuidedTaskMode);
-clearKeyButton.addEventListener("click", clearStoredApiKey);
-providerSelect.addEventListener("change", updateProviderFields);
+resetUrlButton.addEventListener("click", resetBackendUrl);
 taskRequestInput.addEventListener("input", resetTaskClarification);
 answerClarificationButton.addEventListener("click", answerTaskClarification);
 cancelClarificationButton.addEventListener("click", resetTaskClarification);
@@ -157,27 +136,20 @@ function queryElement<T extends Element>(selector: string): T {
 async function restoreGuideSettings(): Promise<void> {
   const stored = await chrome.storage.local.get(Object.values(GUIDE_STORAGE_KEYS)) as StoredSettings;
   const provider = normalizeProvider(stored[GUIDE_STORAGE_KEYS.provider]);
-  providerSelect.value = provider;
   if (stored[GUIDE_STORAGE_KEYS.provider] !== provider) {
     await chrome.storage.local.set({ [GUIDE_STORAGE_KEYS.provider]: provider });
   }
+  await chrome.storage.local.remove(DEPRECATED_STORAGE_KEYS);
   applyProviderFields(stored);
 }
 
-async function clearStoredApiKey(): Promise<void> {
-  const provider = getSelectedProvider();
-  const config = PROVIDER_DEFAULTS[provider];
-  if (provider === "backend") {
-    await chrome.storage.local.set({
-      [PROVIDER_DEFAULTS.backend.baseUrlStorageKey as string]: PROVIDER_DEFAULTS.backend.baseUrl
-    });
-    backendUrlInput.value = PROVIDER_DEFAULTS.backend.baseUrl || "";
-    setStatus("Backend URL reset.");
-    return;
-  }
-  await chrome.storage.local.remove(config.apiKeyStorageKey as string);
-  apiKeyInput.value = "";
-  setStatus(`Stored ${config.label} cleared.`);
+async function resetBackendUrl(): Promise<void> {
+  await chrome.storage.local.set({
+    [PROVIDER_DEFAULTS.backend.baseUrlStorageKey as string]: PROVIDER_DEFAULTS.backend.baseUrl,
+    [GUIDE_STORAGE_KEYS.provider]: "backend"
+  });
+  backendUrlInput.value = PROVIDER_DEFAULTS.backend.baseUrl || "";
+  setStatus("Backend URL reset.");
 }
 
 async function refreshSessionDashboard(): Promise<void> {
@@ -227,52 +199,30 @@ async function toggleAutoRefresh(): Promise<void> {
   }
 }
 
-async function updateProviderFields(): Promise<void> {
-  const provider = getSelectedProvider();
-  resetTaskClarification();
-  await chrome.storage.local.set({ [GUIDE_STORAGE_KEYS.provider]: provider });
-  const stored = await chrome.storage.local.get(Object.values(GUIDE_STORAGE_KEYS)) as StoredSettings;
-  applyProviderFields(stored);
-}
-
 function applyProviderFields(stored: StoredSettings = {}): void {
-  const provider = getSelectedProvider();
-  const config = PROVIDER_DEFAULTS[provider];
-  const isBackend = provider === "backend";
-  backendUrlField.hidden = !isBackend;
-  apiKeyField.hidden = isBackend;
-  clearKeyButton.textContent = isBackend ? "Reset URL" : "Clear key";
+  const config = PROVIDER_DEFAULTS.backend;
+  backendUrlField.hidden = false;
+  resetUrlButton.textContent = "Reset URL";
   backendUrlInput.placeholder = PROVIDER_DEFAULTS.backend.placeholder;
   backendUrlInput.value =
     stored[PROVIDER_DEFAULTS.backend.baseUrlStorageKey as string] ||
     PROVIDER_DEFAULTS.backend.baseUrl ||
     "";
-  if (!isBackend) {
-    apiKeyLabel.textContent = config.label;
-    apiKeyInput.placeholder = config.placeholder;
-    apiKeyInput.value = stored[config.apiKeyStorageKey as string] || "";
-  } else {
-    apiKeyInput.value = "";
-  }
   modelInput.value = config.model;
 }
 
 function getSelectedProvider(): Provider {
-  return normalizeProvider(providerSelect.value);
+  return "backend";
 }
 
 function normalizeProvider(provider: unknown): Provider {
-  return typeof provider === "string" &&
-    Object.prototype.hasOwnProperty.call(PROVIDER_DEFAULTS, provider)
-    ? provider as Provider
-    : "backend";
+  return "backend";
 }
 
 async function startGuidedTaskMode(): Promise<void> {
   const provider = getSelectedProvider();
   const providerConfig = PROVIDER_DEFAULTS[provider];
   const taskRequest = taskRequestInput.value.trim();
-  const apiKey = apiKeyInput.value.trim();
   const backendBaseUrl = backendUrlInput.value.trim() || PROVIDER_DEFAULTS.backend.baseUrl || "";
   const model = providerConfig.model;
 
@@ -282,15 +232,9 @@ async function startGuidedTaskMode(): Promise<void> {
     return;
   }
 
-  if (provider === "backend" && !backendBaseUrl) {
+  if (!backendBaseUrl) {
     setStatus("Enter a Backend URL for the proxy.", true);
     backendUrlInput.focus();
-    return;
-  }
-
-  if (provider !== "backend" && !apiKey) {
-    setStatus(`Enter a ${providerConfig.label} for the prototype.`, true);
-    apiKeyInput.focus();
     return;
   }
 
@@ -299,16 +243,9 @@ async function startGuidedTaskMode(): Promise<void> {
 
   try {
     const settings: Record<string, string> = {
-      [GUIDE_STORAGE_KEYS.provider]: provider
+      [GUIDE_STORAGE_KEYS.provider]: provider,
+      [PROVIDER_DEFAULTS.backend.baseUrlStorageKey as string]: backendBaseUrl
     };
-    if (providerConfig.modelStorageKey) {
-      settings[providerConfig.modelStorageKey] = model;
-    }
-    if (provider === "backend") {
-      settings[PROVIDER_DEFAULTS.backend.baseUrlStorageKey as string] = backendBaseUrl;
-    } else {
-      settings[providerConfig.apiKeyStorageKey as string] = apiKey;
-    }
     await chrome.storage.local.set(settings);
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -439,7 +376,7 @@ function resetTaskClarification(): void {
 
 function setBusy(isBusy: boolean, busyText = "Working..."): void {
   startGuideButton.disabled = isBusy || Boolean(clarificationState?.question);
-  clearKeyButton.disabled = isBusy;
+  resetUrlButton.disabled = isBusy;
   answerClarificationButton.disabled = isBusy;
   cancelClarificationButton.disabled = isBusy;
   startGuideButton.textContent = isBusy ? "Working..." : (clarificationState?.question ? "Clarify first" : "Start guide");

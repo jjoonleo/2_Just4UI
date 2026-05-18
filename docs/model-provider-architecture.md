@@ -1,6 +1,6 @@
 # Model Provider Architecture
 
-This document defines the recommended way for Bridge to support Gemini, OpenAI, and any future Codex-style provider while preserving Guided Task Mode boundaries.
+This document defines the recommended way for Bridge to use a backend proxy for plan creation while preserving Guided Task Mode boundaries.
 
 ## Goal
 
@@ -19,10 +19,8 @@ Side panel
       -> collect Page Snapshot
       -> create Planning Payload
       -> call model provider adapter
-          -> Gemini direct adapter for local demo
-          -> OpenAI direct adapter for local demo
-          -> backend proxy adapter for release-oriented work
-              -> optional Codex OAuth adapter behind the proxy
+          -> backend proxy adapter
+              -> configured backend provider
       -> validate Plan Contract
       -> save Guidance Session
       -> inject guide overlay
@@ -66,29 +64,11 @@ The orchestration layer owns:
 - Session persistence and refresh.
 - Overlay rendering.
 
-## Current Bridge Cleanup First
+## Current Bridge Provider State
 
-Before adding a new provider, fix provider drift in the root extension:
+Decision: the extension-side provider path is `Backend Proxy` only. Codex or any future model provider is selected and configured behind the backend. This keeps provider credentials and provider-specific request handling out of the MV3 extension.
 
-- `src/extension/sidepanel/sidepanel.html` should not show `Gemini` for an `openai` option.
-- `src/extension/sidepanel/main.ts` should not force `getSelectedProvider()` to always return `openai` unless the UI is intentionally OpenAI-only.
-- `PROVIDER_DEFAULTS` and `PROVIDER_DISPLAY_LABELS` should use honest labels.
-- `src/extension/service-worker/main.ts` `PROVIDER_CONFIG.openai.label` should say `OpenAI`, not `Gemini`.
-- Error messages in the OpenAI path should mention OpenAI, not Gemini.
-
-After that cleanup, adding providers becomes mostly adapter work instead of touching the whole session flow.
-
-Decision: the extension-side provider label for the proxy path is `Backend Proxy`, not `Codex`. Codex is selected and configured behind the backend. This keeps the side panel honest about where credentials and model calls live.
-
-For the Codex integration step, the visible provider choices should be:
-
-- `Backend Proxy`
-- `Gemini Demo`
-- `OpenAI Demo`
-
-The default provider should be `Backend Proxy`.
-
-Decision: keep direct Gemini and OpenAI extension providers as demo-only options for now. They are useful for local fallback and comparison, but extension-side API key storage remains a local demo practice. `Backend Proxy` should be the default provider path.
+The side panel should collect only the backend URL and task request. The extension may preserve `bridgeModelProvider=backend` for compatibility with old storage, but it should normalize any older direct-provider values to the backend path.
 
 ## Backend Proxy Path
 
@@ -245,7 +225,7 @@ Decision: the backend must require `BRIDGE_CODEX_MODEL` when `BRIDGE_BACKEND_PRO
 
 ## Official OpenAI Provider
 
-For a stable OpenAI path, use the official OpenAI Responses API from the backend proxy or from local demo extension code.
+For a stable OpenAI path, use the official OpenAI Responses API from the backend proxy.
 
 The adapter should send:
 
@@ -254,19 +234,7 @@ The adapter should send:
 - `text.format.type: "json_schema"` with the Plan Contract schema.
 - `store: false` when available and appropriate for the request path.
 
-The extension should still parse and validate the response locally. Structured output reduces invalid output risk, but it does not replace Bridge policy validation.
-
-## Gemini Provider
-
-The Gemini adapter can remain useful for local demo work. It should own:
-
-- Gemini model default.
-- `generateContent` URL construction.
-- `responseMimeType: "application/json"`.
-- `responseJsonSchema`.
-- Gemini-specific truncation and API-key error handling.
-
-It should return the same Plan Contract object as every other provider.
+The extension should still validate the backend response locally. Structured output reduces invalid output risk, but it does not replace Bridge policy validation.
 
 ## Privacy And Safety Rules
 
@@ -282,13 +250,10 @@ Every provider path must preserve these rules:
 
 ## Implementation Order
 
-1. Fix existing Gemini/OpenAI label and provider-selection drift.
-2. Extract provider metadata into one provider registry.
-3. Extract `createGeminiGuidancePlan()` and `createOpenAiGuidancePlan()` behind a shared adapter boundary.
-4. Keep `src/extension/service-worker/main.ts` as the session orchestrator while factoring provider and Plan Contract behavior into shared TypeScript modules.
-5. Add a backend proxy adapter for release-oriented provider calls.
-6. Add provider-focused tests around label normalization, request construction, response parsing, and provider error messages.
-7. Consider a Codex-style backend adapter only after the proxy path exists.
+1. Keep `src/extension/service-worker/main.ts` as the session orchestrator while factoring backend-provider and Plan Contract behavior into shared TypeScript modules.
+2. Extract backend provider metadata into one small provider registry if another backend provider is added.
+3. Add provider-focused tests around backend URL handling, request construction, response parsing, and backend error messages.
+4. Consider additional backend adapters only behind the proxy path.
 
 ## Non-Goals
 
