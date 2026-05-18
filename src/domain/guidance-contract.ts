@@ -74,6 +74,10 @@ const SENSITIVE_VALUE_KEYS = new Set([
 ]);
 
 const URL_KEYS = new Set(["url", "canonicalUrl", "href"]);
+const EXTENSION_ACTOR_PATTERN =
+  /\b(?:bridge|extension|assistant|agent|model|ai|system|we|i)\b[\s\S]{0,48}\b(?:click|type|enter|submit|purchase|buy|delete|remove|confirm|press|choose|select|fill|send)\b/i;
+const HIGH_RISK_ACTION_PATTERN =
+  /\b(?:checkout|payment|pay|purchase|buy|order|confirm purchase|credit card|card number|cvv|ssn|social security|personal information|personal info|password|home address|address|phone number|date of birth|birth date|delete account|remove account|delete|destructive|irreversible)\b/i;
 
 export function normalizeGuidancePlanMode(mode: unknown): GuidancePlanMode {
   return isGuidancePlanMode(mode) ? mode : GUIDANCE_PLAN_MODES.REFRESH;
@@ -218,7 +222,7 @@ function containsHighRiskAction(text: string): boolean {
   const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
   if (!normalized) return false;
 
-  return /\b(checkout|payment|pay|purchase|buy|credit card|card number|personal information|personal info|ssn|social security|delete account|account deletion|delete|remove account|destructive)\b/i.test(normalized);
+  return /\b(checkout|payment|pay|purchase|buy|credit card|card number|cvv|personal information|personal info|ssn|social security|home address|address|phone number|date of birth|birth date|delete account|account deletion|delete|remove account|destructive|irreversible)\b/i.test(normalized);
 }
 
 function containsExtensionSidePageAction(text: string): boolean {

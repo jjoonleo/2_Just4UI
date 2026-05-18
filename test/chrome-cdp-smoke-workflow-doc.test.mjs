@@ -41,7 +41,8 @@ test("Chrome/CDP smoke workflow documents Bridge development QA boundaries", () 
     "local HTTP fixture pages",
     "opt-in",
     "Chrome for Testing",
-    "BRIDGE_EXTENSION_ID"
+    "--no-browser-download",
+    "--list-checks"
   ].forEach((requiredText) => {
     assert.match(workflow, new RegExp(requiredText, "i"));
   });
@@ -51,15 +52,15 @@ test("Chrome/CDP smoke workflow documents Bridge development QA boundaries", () 
 
 test("Chrome smoke runner stays opt-in and outside ordinary tests", () => {
   const packageJson = JSON.parse(read("package.json"));
-  const smokeScript = read("scripts/chrome-cdp-smoke.mjs");
+  const smokeScript = read("scripts/smoke-bridge.mjs");
 
   assert.equal(
     packageJson.scripts["smoke:chrome"],
-    "npm run build && node scripts/chrome-cdp-smoke.mjs",
+    "node scripts/smoke-bridge.mjs",
   );
-  assert.doesNotMatch(packageJson.scripts.test, /smoke:chrome|chrome-cdp-smoke/);
+  assert.doesNotMatch(packageJson.scripts.test, /smoke:chrome|smoke-bridge/);
   assert.match(smokeScript, /--load-extension/);
-  assert.match(smokeScript, /startStubBackend/);
-  assert.match(smokeScript, /chrome:\/\/extensions\//);
+  assert.match(smokeScript, /startBackendServer/);
+  assert.match(smokeScript, /chrome:\/\/extensions/);
   assert.match(smokeScript, /BRIDGE_START_GUIDE/);
 });

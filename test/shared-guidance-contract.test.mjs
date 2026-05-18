@@ -158,6 +158,11 @@ test("Guide-Only policy upgrades high-risk guidance for payment, deletion, and p
       task: "Submit my profile",
       instruction: "Use the personal information form submit button.",
       target: { role: "button", text: "Submit personal information" }
+    },
+    {
+      task: "Update my profile",
+      instruction: "Use the fields for your home address and phone number.",
+      target: { role: "textbox", label: "Home address" }
     }
   ];
 

@@ -126,6 +126,7 @@ async function startGuide({
 
     const snapshot = await extractSnapshotFromTab(tabId);
     const planningPayload = createPlanningPayload(snapshot);
+    const currentPageTargetRegistry = createCurrentPageTargetRegistry(snapshot);
 
     await setGuideActivity({
       phase: "askingAi",
@@ -170,6 +171,7 @@ async function startGuide({
       taskRequest: planDecision.clarifiedTaskRequest,
       model: selectedModel,
       plan: toGuidancePlan(planDecision),
+      currentPageTargetRegistry,
       currentStepIndex: 0,
       completedStepSummaries: [],
       completedStepHistory: [],
@@ -313,6 +315,7 @@ async function refreshHostTab(tabId, message = "", options = {}) {
 
     const snapshot = await extractSnapshotFromTab(tabId);
     const planningPayload = createPlanningPayload(snapshot);
+    const currentPageTargetRegistry = createCurrentPageTargetRegistry(snapshot);
     const session = await getActiveSession();
     if (!session || session.hostTabId !== tabId) return;
 
@@ -372,6 +375,7 @@ async function refreshHostTab(tabId, message = "", options = {}) {
         session,
         toGuidancePlan(refreshedPlanDecision),
       ),
+      currentPageTargetRegistry,
       currentStepIndex: 0,
       status: "active",
       pendingClarification: null,
@@ -768,6 +772,11 @@ async function extractSnapshotFromTab(tabId) {
 async function renderOverlay(tabId, session, message = "") {
   await chrome.scripting.executeScript({
     target: { tabId },
+    files: ["dist/target-matching.js"],
+  });
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
     func: installGuidedTaskOverlay,
     args: [
       session.plan,
@@ -775,6 +784,7 @@ async function renderOverlay(tabId, session, message = "") {
         currentStepIndex: session.currentStepIndex || 0,
         message,
         autoRefreshPaused: Boolean(session.autoRefreshPaused),
+        targetRegistry: session.currentPageTargetRegistry || [],
       },
     ],
   });
@@ -1226,6 +1236,37 @@ function createPlanningPayload(snapshot) {
         bounds: compactBounds(item.bounds),
       }),
     ),
+  });
+}
+
+function createCurrentPageTargetRegistry(snapshot) {
+  const content = snapshot.content || {};
+  const targets = [];
+
+  for (const item of content.interactiveElements || []) {
+    targets.push(compactTargetRegistryItem(item));
+  }
+
+  for (const form of content.forms || []) {
+    targets.push(compactTargetRegistryItem(form));
+    for (const field of form.fields || []) {
+      targets.push(compactTargetRegistryItem(field));
+    }
+  }
+
+  return targets.filter((target) => target.snapshotId && target.selector);
+}
+
+function compactTargetRegistryItem(item = {}) {
+  return compactObject({
+    snapshotId: item.snapshotId,
+    selector: item.selector,
+    role: item.role,
+    label: item.label,
+    text: item.text,
+    href: item.href,
+    name: item.name,
+    placeholder: item.placeholder,
   });
 }
 
@@ -2242,6 +2283,12 @@ function installGuidedTaskOverlay(plan, options = {}) {
   }
 
   function resolveTarget(target) {
+    const matcher = window.__bridgeTargetMatching?.resolvePageTarget;
+    if (typeof matcher === "function") {
+      const matched = matcher(target || {}, createTargetCandidates(target || {}));
+      if (matched) return matched;
+    }
+
     const bySelector = findBySelector(target.selector);
     if (bySelector) return bySelector;
     const candidates = Array.from(
@@ -2261,11 +2308,60 @@ function installGuidedTaskOverlay(plan, options = {}) {
     return best;
   }
 
+  function createTargetCandidates(target) {
+    const candidates = [];
+
+    for (const item of options.targetRegistry || []) {
+      const element = findBySelector(item.selector);
+      if (element) candidates.push(createTargetCandidate(element, item));
+    }
+
+    const selectorElement = findBySelector(target.selector);
+    if (selectorElement) {
+      candidates.push(
+        createTargetCandidate(selectorElement, { selector: target.selector }),
+      );
+    }
+
+    Array.from(
+      document.querySelectorAll(
+        "a[href],button,input,select,textarea,summary,[role],[tabindex]:not([tabindex='-1']),h1,h2,h3,h4,h5,h6,p,li,label",
+      ),
+    )
+      .filter((element) => isVisible(element) && !isBridgeElement(element))
+      .forEach((element) => candidates.push(createTargetCandidate(element)));
+
+    return candidates;
+  }
+
+  function createTargetCandidate(element, overrides = {}) {
+    return {
+      element,
+      snapshotId: overrides.snapshotId || null,
+      selector: overrides.selector || getCssPath(element),
+      role: overrides.role || getRole(element),
+      label: overrides.label || getAccessibleName(element),
+      text: overrides.text || getElementText(element),
+      href:
+        overrides.href ||
+        (element instanceof HTMLAnchorElement ? element.href : null),
+      name: overrides.name || element.getAttribute("name"),
+      placeholder:
+        overrides.placeholder ||
+        (element.matches("input,select,textarea")
+          ? element.getAttribute("placeholder")
+          : null),
+      visible: isVisible(element),
+    };
+  }
+
   function findBySelector(selector) {
     if (!selector) return null;
     try {
       const element = document.querySelector(selector);
-      return element && isVisible(element) ? element : null;
+      return element && isVisible(element) && !isBridgeElement(element)
+        ? element
+        : null;
     } catch {
       return null;
     }
@@ -2513,6 +2609,34 @@ function installGuidedTaskOverlay(plan, options = {}) {
     return String(element?.innerText || element?.textContent || "")
       .replace(/\s+/g, " ")
       .trim();
+  }
+
+  function getCssPath(element) {
+    if (!element || element.nodeType !== Node.ELEMENT_NODE) return null;
+    if (element.id) return `#${cssEscape(element.id)}`;
+    const parts = [];
+    let current = element;
+    while (
+      current &&
+      current.nodeType === Node.ELEMENT_NODE &&
+      current !== document.documentElement
+    ) {
+      let part = current.tagName.toLowerCase();
+      const classNames = Array.from(current.classList).slice(0, 2);
+      if (classNames.length) part += `.${classNames.map(cssEscape).join(".")}`;
+      const parent = current.parentElement;
+      if (parent) {
+        const sameTagSiblings = Array.from(parent.children).filter(
+          (child) => child.tagName === current.tagName,
+        );
+        if (sameTagSiblings.length > 1)
+          part += `:nth-of-type(${sameTagSiblings.indexOf(current) + 1})`;
+      }
+      parts.unshift(part);
+      if (parts.length >= 5) break;
+      current = parent;
+    }
+    return parts.join(" > ");
   }
 
   function includesEither(left, right) {

@@ -58,6 +58,8 @@ The backend reads `~/.codex/auth.json` as read-only local demo credentials. It d
 
 Chrome blocks extensions from injecting scripts into internal pages such as `chrome://extensions`, the Chrome Web Store, and some browser-owned pages. Test on regular `http://` or `https://` pages.
 
+For repeatable developer QA, see `docs/chrome-cdp-smoke-workflow.md`.
+
 ## Development Commands
 
 ```bash

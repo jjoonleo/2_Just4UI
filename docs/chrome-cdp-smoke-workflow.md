@@ -2,7 +2,7 @@
 
 This is a development-only QA workflow for Bridge Guided Task Mode. It uses normal Chrome extension loading and may use Chrome DevTools Protocol (CDP) or browser automation to observe the browser during development, but CDP is not a product runtime dependency.
 
-Bridge runtime behavior stays inside the MV3 extension, the side panel, the service worker, content-script injection, and the optional backend proxy. A smoke runner may open pages, collect console errors, and inspect rendered UI, but it must not click, type, submit, purchase, delete, confirm, or otherwise perform page actions as product behavior for the user.
+Bridge runtime behavior stays inside the MV3 extension, the side panel, the service worker, content-script injection, and the optional Backend Proxy. A smoke runner may open pages, collect console errors, and inspect rendered UI, but it must not click, type, submit, purchase, delete, confirm, or otherwise perform page actions as product behavior for the user.
 
 ## Build And Load
 
@@ -32,26 +32,38 @@ A harness must not become required for normal users. The extension must continue
 
 ## Automated Smoke Runner
 
-Run the opt-in smoke runner after building source changes:
+Run the opt-in smoke runner after source changes:
 
 ```bash
 npm run smoke:chrome
 ```
 
-The script starts a temporary Chrome profile with this repository loaded as an unpacked extension, serves local HTTP fixture pages, starts a deterministic stub backend, and connects to Chrome over CDP. It does not call Codex or any remote model provider.
+The script runs `npm run build`, starts a temporary Chrome profile with this repository loaded as an unpacked extension, serves local HTTP fixture pages, starts a deterministic stub backend, and connects to Chrome over CDP. It does not call Codex or any remote model provider.
+
+The runner uses Chrome for Testing when possible and downloads it into `~/.cache/bridge/chrome-for-testing` when no compatible local browser is available. Recent branded Chrome builds may ignore command-line unpacked-extension loading, so prefer Chrome for Testing or Chromium for automated runs.
+
+Useful runner options:
+
+```bash
+npm run smoke:chrome -- --headless
+npm run smoke:chrome -- --keep-open
+npm run smoke:chrome -- --chrome-path="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+npm run smoke:chrome -- --no-browser-download
+npm run smoke:chrome -- --skip-build
+npm run smoke:chrome -- --list-checks
+```
 
 The automated runner checks:
 
 - The unpacked extension exposes a service worker and side panel page.
 - A normal HTTP fixture page can start Guided Task Mode through the existing extension message contract.
+- Missing backend behavior fails clearly without leaving a stale overlay.
 - The stub backend receives an `initial` guidance request and later a `refresh` guidance request.
-- The overlay root and highlight render on the original page.
+- The overlay root and target highlight render on the original page.
 - The highlight contains the intended Page Target on the initial page and after navigation refresh.
 - Navigation on the Session Host Tab refreshes guidance with fresh page evidence.
 - Navigation to a Chrome-owned page pauses the session cleanly.
 - Console errors are absent from the target page, side panel page, and service worker when those CDP targets are available.
-
-Set `CHROME_PATH=/path/to/chrome` if Chrome is not in the default location. Prefer Chrome for Testing or Chromium for this runner because recent branded Google Chrome builds may ignore command-line unpacked extension loading. Set `BRIDGE_EXTENSION_ID=<id>` when attaching to an already-loaded development extension, `BRIDGE_SMOKE_HEADLESS=1` to request Chrome's new headless mode, or `BRIDGE_SMOKE_VERBOSE=1` to print Chrome process output while debugging.
 
 Keep this script opt-in. It launches a real browser and should not run as part of ordinary `npm test` unless a future CI environment explicitly supports Chrome extension smoke checks.
 
@@ -61,7 +73,7 @@ Keep this script opt-in. It launches a real browser and should not run as part o
 
 1. Click the Bridge extension action.
 2. Confirm the side panel opens.
-3. Confirm the setup controls show the **Backend Proxy** URL field and task request field.
+3. Confirm the setup controls show the Backend Proxy URL field and task request field.
 4. Start without a reachable backend:
    - Leave the backend URL empty, use an invalid backend URL, or stop the backend.
    - Verify missing backend or backend connection behavior is clear.

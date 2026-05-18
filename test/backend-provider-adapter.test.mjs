@@ -105,3 +105,90 @@ test("backend provider adapter normalizes URLs and formats backend failures", as
     /Backend Proxy request failed before a response: connection refused/
   );
 });
+
+test("backend provider adapter redacts Planning Payload URLs before provider calls", async () => {
+  const calls = [];
+
+  await createBackendProviderPlan({
+    backendBaseUrl: "http://localhost:8787",
+    mode: "initial",
+    taskRequest: "Find help",
+    planningPayload: {
+      page: {
+        url: "https://example.com/orders?token=secret#receipt",
+        canonicalUrl: "https://example.com/orders?session=abc"
+      },
+      links: [{ href: "https://example.com/help?q=private#top" }],
+      interactiveElements: [{ href: "/checkout?cart=secret#pay" }]
+    },
+    previousSession: null,
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ status: "needsClarification", question: "Which order?" })
+      };
+    }
+  });
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.planningPayload.page.url, "https://example.com/orders");
+  assert.equal(body.planningPayload.page.canonicalUrl, "https://example.com/orders");
+  assert.equal(body.planningPayload.links[0].href, "https://example.com/help");
+  assert.equal(body.planningPayload.interactiveElements[0].href, "/checkout");
+});
+
+test("backend provider adapter rejects likely form values before provider calls", async () => {
+  let called = false;
+
+  await assert.rejects(
+    () =>
+      createBackendProviderPlan({
+        backendBaseUrl: "http://localhost:8787",
+        mode: "initial",
+        taskRequest: "Find help",
+        planningPayload: {
+          forms: [{ label: "Email", value: "ejun@example.com" }]
+        },
+        previousSession: null,
+        fetchImpl: async () => {
+          called = true;
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({})
+          };
+        }
+      }),
+    /form values/i
+  );
+
+  assert.equal(called, false);
+});
+
+test("backend provider adapter allows form metadata without user-entered values", async () => {
+  let body = null;
+
+  await createBackendProviderPlan({
+    backendBaseUrl: "http://localhost:8787",
+    mode: "initial",
+    taskRequest: "Find help",
+    planningPayload: {
+      forms: [{ label: "Email", type: "email", valueIncluded: false }]
+    },
+    previousSession: null,
+    fetchImpl: async (_url, init) => {
+      body = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ status: "needsClarification", question: "Which help page?" })
+      };
+    }
+  });
+
+  assert.deepEqual(body.planningPayload.forms, [
+    { label: "Email", type: "email", valueIncluded: false }
+  ]);
+});

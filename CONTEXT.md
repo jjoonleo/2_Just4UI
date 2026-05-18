@@ -172,7 +172,7 @@ _Avoid_: Any Chrome window, global browser scope, profile-wide guide
 - A **Guidance Plan** may be created without **Task Clarification** when the current page evidence and **Task Request** identify the next useful **Guidance Step** with enough confidence.
 - A **Task Template** may prefill a **Task Request**.
 - A **Guidance Step** points to one primary page target.
-- A **Page Target** is matched from page evidence such as role, label, text, location, and selector.
+- A **Page Target** is matched by its current **Page Snapshot** `snapshotId` first, then by fallback evidence such as selector, role, label, text, href, and location.
 - **Target Recovery** may update a **Page Target** once when the original match is missing.
 - A **Risk Gate** may appear before a **Guidance Step** that involves sensitive or irreversible consequences.
 - A **Guidance Plan** is created from one **Task Request** and one **Page Snapshot**.

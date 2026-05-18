@@ -1,3 +1,8 @@
+import {
+  assertNoFormValues,
+  redactPlanningPayloadUrls
+} from "../domain/guidance-contract";
+
 type ClarificationHistoryItem = {
   question?: unknown;
   answer?: unknown;
@@ -23,6 +28,7 @@ export async function createBackendProviderPlan({
   fetchImpl = fetch
 }: BackendProviderPlanRequest): Promise<unknown> {
   const endpoint = `${normalizeBackendBaseUrl(backendBaseUrl)}/guidance-plan`;
+  const safePlanningPayload = sanitizePlanningPayload(planningPayload);
   const response = await fetchImpl(endpoint, {
     method: "POST",
     headers: {
@@ -32,7 +38,7 @@ export async function createBackendProviderPlan({
       contractVersion: 1,
       mode,
       taskRequest,
-      planningPayload,
+      planningPayload: safePlanningPayload,
       previousSession,
       clarificationHistory: compactClarificationHistory(clarificationHistory)
     })
@@ -45,16 +51,29 @@ export async function createBackendProviderPlan({
   const data = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(
-      data?.error || `Backend Proxy request failed with HTTP ${response.status}.`
+      responseErrorMessage(data, `Backend Proxy request failed with HTTP ${response.status}.`)
     );
   }
   return data;
+}
+
+export function sanitizePlanningPayload<T>(planningPayload: T): T {
+  assertNoFormValues(planningPayload);
+  return redactPlanningPayloadUrls(planningPayload);
 }
 
 export function normalizeBackendBaseUrl(baseUrl: unknown): string {
   const trimmed = String(baseUrl || "").trim().replace(/\/+$/, "");
   if (!trimmed) throw new Error("Backend Proxy URL is missing.");
   return trimmed;
+}
+
+function responseErrorMessage(data: unknown, fallback: string): string {
+  if (data && typeof data === "object" && "error" in data) {
+    const error = (data as { error?: unknown }).error;
+    if (typeof error === "string" && error.trim()) return error;
+  }
+  return fallback;
 }
 
 function compactClarificationHistory(history: ClarificationHistoryItem[]): Array<{
