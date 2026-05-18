@@ -31,19 +31,18 @@ Pivot the project from rebuilding simplified pages to **Guided Task Mode**: a Ch
 - Preserve completed steps as immutable **Completed Step History**. Do not let later model output rewrite or remove completed steps.
 - Send a reduced **Planning Payload**, not the full raw Page Snapshot, and never include form values.
 - Keep Page State Change refresh structure-only in v1; do not include screenshots unless a later explicit visual mode is added.
-- For the prototype only, call Gemini or OpenAI directly from extension JavaScript using a user-pasted API key stored in `chrome.storage.local`. Do not hardcode or commit an API key.
+- Call the backend proxy from extension JavaScript. Store only the backend URL in `chrome.storage.local`; provider credentials stay outside the extension.
 - The model must return strict JSON matching the **Plan Contract**. The extension must validate it before rendering.
-- Backend proxy migration is required before real release because extension-side API keys are exposed to users.
 
 ## Proposed Architecture
 
 ```text
 Popup
-  -> user enters Task Request and optional API key
+  -> user enters Task Request and Backend Proxy URL
   -> content script extracts Page Snapshot
   -> popup/content script derives Planning Payload
-  -> extension calls selected model provider API
-  -> model returns Plan Contract JSON with guidance or one clarification question
+  -> extension calls Backend Proxy
+  -> backend returns Plan Contract JSON with guidance or one clarification question
   -> extension validates the response
   -> content script renders overlay on original page
   -> user performs each action manually
@@ -251,18 +250,18 @@ Risk Gate behavior:
 
 ## Implementation Steps
 
-1. Add extension state for Task Request, API key presence, active Progressive Guidance Plan, current step index, Completed Step History, and overlay status.
+1. Add extension state for Task Request, Backend Proxy URL, active Progressive Guidance Plan, current step index, Completed Step History, and overlay status.
 2. Add popup UI for:
    - Task Request input.
-   - API key setup field stored in `chrome.storage.local`.
+   - Backend URL field stored in `chrome.storage.local`.
    - Start Guided Task Mode button.
-   - Clear API key button.
+   - Reset Backend URL button.
 3. Extract a Page Snapshot using the existing `collectPageSnapshot` path.
 4. Add a `createPlanningPayload(snapshot)` function that trims the snapshot to the reduced model input.
-5. Add model-call modules that:
-   - Reads the API key from extension storage.
+5. Add backend proxy call modules that:
+   - Reads the Backend URL from extension storage.
    - Returns either confident guidance or one Task Clarification question from the same Plan Contract.
-   - Sends the Task Request, Planning Payload, and progressive continuation context to Gemini or OpenAI.
+   - Sends the Task Request, Planning Payload, and progressive continuation context to the backend proxy.
    - Requests JSON-only output.
    - Handles network, authentication, and parse failures.
 6. Add a `validateGuidancePlan(value)` function for the Plan Contract.
@@ -291,7 +290,7 @@ Risk Gate behavior:
    - Queue one follow-up refresh when a page changes while a refresh is already running.
    - Add a session-level control to pause automatic refresh.
 11. Add graceful failure states:
-   - Missing API key.
+   - Missing Backend URL.
    - Model failure.
    - Invalid Plan Contract.
    - Target not found.
@@ -302,7 +301,7 @@ Risk Gate behavior:
    - Remove the old overlay before refreshing the guide on the new host tab.
    - Preserve completed step history while resetting the refreshed page-specific step index.
 13. Keep `regenerated/` as a demo/reference artifact, but stop treating it as the main simplification path.
-14. Update README after implementation to describe Guided Task Mode and prototype API-key limitations.
+14. Update README after implementation to describe Guided Task Mode and backend proxy setup.
 
 ## Validation
 
@@ -331,7 +330,7 @@ Risk Gate behavior:
 - Verify switching Chrome windows does not move the guide out of its original window.
 - Verify removing/changing a target triggers Target Recovery once.
 - Verify invalid model JSON is rejected with a clear error.
-- Verify no API key is committed to the repo.
+- Verify no provider credential is committed to the repo.
 - Verify Chrome-restricted pages still fail gracefully.
 
 ## Open Questions

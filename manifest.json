@@ -7,10 +7,10 @@
     "default_title": "Open Bridge side panel"
   },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "dist/background.js"
   },
   "side_panel": {
-    "default_path": "sidepanel.html"
+    "default_path": "dist/sidepanel.html"
   },
   "permissions": [
     "activeTab",
@@ -21,8 +21,6 @@
   ],
   "host_permissions": [
     "http://*/*",
-    "https://*/*",
-    "https://api.openai.com/*",
-    "https://generativelanguage.googleapis.com/*"
+    "https://*/*"
   ]
 }

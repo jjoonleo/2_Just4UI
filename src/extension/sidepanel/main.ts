@@ -1,66 +1,92 @@
-const statusPanelEl = document.getElementById("statusPanel");
-const loadingIndicator = document.getElementById("loadingIndicator");
-const loadingText = document.getElementById("loadingText");
-const statusEl = document.getElementById("status");
-const providerSelect = document.getElementById("providerSelect");
-const apiKeyLabel = document.getElementById("apiKeyLabel");
-const apiKeyInput = document.getElementById("apiKeyInput");
-const modelInput = document.getElementById("modelInput");
-const taskRequestInput = document.getElementById("taskRequestInput");
-const clarificationPanel = document.getElementById("clarificationPanel");
-const clarificationQuestion = document.getElementById("clarificationQuestion");
-const clarificationAnswerInput = document.getElementById("clarificationAnswerInput");
-const answerClarificationButton = document.getElementById("answerClarificationButton");
-const cancelClarificationButton = document.getElementById("cancelClarificationButton");
-const startGuideButton = document.getElementById("startGuideButton");
-const clearKeyButton = document.getElementById("clearKeyButton");
-const sessionStatusText = document.getElementById("sessionStatusText");
-const sessionStatusBadge = document.getElementById("sessionStatusBadge");
-const guideActivity = document.getElementById("guideActivity");
-const guideActivityText = document.getElementById("guideActivityText");
-const sessionTask = document.getElementById("sessionTask");
-const sessionStep = document.getElementById("sessionStep");
-const sessionIssue = document.getElementById("sessionIssue");
-const generatedGuideSection = document.querySelector(".generatedGuide");
-const generatedGuideCount = document.getElementById("generatedGuideCount");
-const generatedGuideList = document.getElementById("generatedGuideList");
-const autoRefreshButton = document.getElementById("autoRefreshButton");
-const endGuideButton = document.getElementById("endGuideButton");
+export {};
+
+type Provider = "backend";
+type StoredSettings = Record<string, string | undefined>;
+type ProviderConfig = {
+  label: string;
+  placeholder: string;
+  model: string;
+  baseUrl?: string;
+  baseUrlStorageKey?: string;
+};
+type ClarificationState = {
+  mode: "start" | "session";
+  provider: Provider | "";
+  model: string;
+  taskRequest: string;
+  history: Array<{ question?: string; answer?: string }>;
+  question: string;
+};
+type StartClarificationState = ClarificationState & {
+  mode: "start";
+  provider: Provider;
+};
+type StartGuideRequest = {
+  tabId: number;
+  provider: Provider;
+  model: string;
+  taskRequest: string;
+  history?: Array<{ question?: string; answer?: string }>;
+};
+type GuideStepState = "completed" | "current" | "notCompleted";
+
+const statusPanelEl = getElement<HTMLElement>("statusPanel");
+const loadingIndicator = getElement<HTMLElement>("loadingIndicator");
+const loadingText = getElement<HTMLElement>("loadingText");
+const statusEl = getElement<HTMLElement>("status");
+const backendUrlField = getElement<HTMLElement>("backendUrlField");
+const backendUrlInput = getElement<HTMLInputElement>("backendUrlInput");
+const modelInput = getElement<HTMLInputElement>("modelInput");
+const taskRequestInput = getElement<HTMLTextAreaElement>("taskRequestInput");
+const clarificationPanel = getElement<HTMLElement>("clarificationPanel");
+const clarificationQuestion = getElement<HTMLElement>("clarificationQuestion");
+const clarificationAnswerInput = getElement<HTMLTextAreaElement>("clarificationAnswerInput");
+const answerClarificationButton = getElement<HTMLButtonElement>("answerClarificationButton");
+const cancelClarificationButton = getElement<HTMLButtonElement>("cancelClarificationButton");
+const startGuideButton = getElement<HTMLButtonElement>("startGuideButton");
+const resetUrlButton = getElement<HTMLButtonElement>("resetUrlButton");
+const sessionStatusText = getElement<HTMLElement>("sessionStatusText");
+const sessionStatusBadge = getElement<HTMLElement>("sessionStatusBadge");
+const guideActivity = getElement<HTMLElement>("guideActivity");
+const guideActivityText = getElement<HTMLElement>("guideActivityText");
+const sessionTask = getElement<HTMLElement>("sessionTask");
+const sessionStep = getElement<HTMLElement>("sessionStep");
+const sessionIssue = getElement<HTMLElement>("sessionIssue");
+const generatedGuideSection = queryElement<HTMLElement>(".generatedGuide");
+const generatedGuideCount = getElement<HTMLElement>("generatedGuideCount");
+const generatedGuideList = getElement<HTMLOListElement>("generatedGuideList");
+const autoRefreshButton = getElement<HTMLButtonElement>("autoRefreshButton");
+const endGuideButton = getElement<HTMLButtonElement>("endGuideButton");
 let currentAutoRefreshPaused = false;
 
 const GUIDE_STORAGE_KEYS = {
   provider: "bridgeModelProvider",
-  geminiApiKey: "bridgeGeminiApiKey",
-  geminiModel: "bridgeGeminiModel",
-  openAiApiKey: "bridgeOpenAiApiKey",
-  openAiModel: "bridgeOpenAiModel"
+  backendBaseUrl: "bridgeBackendBaseUrl"
 };
+const DEPRECATED_STORAGE_KEYS = [
+  "bridgeGeminiApiKey",
+  "bridgeGeminiModel",
+  "bridgeOpenAiApiKey",
+  "bridgeOpenAiModel"
+];
 
-const PROVIDER_DEFAULTS = {
-  gemini: {
-    label: "Gemini API key",
-    placeholder: "AIza...",
-    model: "gemini-2.5-flash",
-    apiKeyStorageKey: GUIDE_STORAGE_KEYS.geminiApiKey,
-    modelStorageKey: GUIDE_STORAGE_KEYS.geminiModel
-  },
-  openai: {
-    label: "Gemini API key",
-    placeholder: "sk-...",
-    model: "gpt-4.1-mini",
-    apiKeyStorageKey: GUIDE_STORAGE_KEYS.openAiApiKey,
-    modelStorageKey: GUIDE_STORAGE_KEYS.openAiModel
+const PROVIDER_DEFAULTS: Record<Provider, ProviderConfig> = {
+  backend: {
+    label: "Backend URL",
+    placeholder: "http://localhost:8787",
+    model: "backend-proxy",
+    baseUrl: "http://localhost:8787",
+    baseUrlStorageKey: GUIDE_STORAGE_KEYS.backendBaseUrl
   }
 };
 
-const PROVIDER_DISPLAY_LABELS = {
-  gemini: "Gemini",
-  openai: "Gemini"
+const PROVIDER_DISPLAY_LABELS: Record<Provider, string> = {
+  backend: "Backend Proxy"
 };
 
-let clarificationState = null;
+let clarificationState: ClarificationState | null = null;
 
-const SESSION_STATUS_LABELS = {
+const SESSION_STATUS_LABELS: Record<string, string> = {
   noGuide: "No guide",
   planning: "Planning",
   active: "Active",
@@ -69,7 +95,7 @@ const SESSION_STATUS_LABELS = {
   failed: "Failed"
 };
 
-const SESSION_STATUS_TEXT = {
+const SESSION_STATUS_TEXT: Record<string, string> = {
   noGuide: "No guide is running.",
   planning: "A guide is being prepared.",
   active: "A guide is active on the current session tab.",
@@ -79,8 +105,7 @@ const SESSION_STATUS_TEXT = {
 };
 
 startGuideButton.addEventListener("click", startGuidedTaskMode);
-clearKeyButton.addEventListener("click", clearStoredApiKey);
-providerSelect.addEventListener("change", updateProviderFields);
+resetUrlButton.addEventListener("click", resetBackendUrl);
 taskRequestInput.addEventListener("input", resetTaskClarification);
 answerClarificationButton.addEventListener("click", answerTaskClarification);
 cancelClarificationButton.addEventListener("click", resetTaskClarification);
@@ -96,23 +121,38 @@ chrome.runtime.onMessage.addListener((message) => {
 restoreGuideSettings();
 refreshSessionDashboard();
 
-async function restoreGuideSettings() {
-  const stored = await chrome.storage.local.get(Object.values(GUIDE_STORAGE_KEYS));
-  providerSelect.value = "openai";
-  if (stored[GUIDE_STORAGE_KEYS.provider] !== "openai") {
-    await chrome.storage.local.set({ [GUIDE_STORAGE_KEYS.provider]: "openai" });
+function getElement<T extends HTMLElement>(id: string): T {
+  const element = document.getElementById(id);
+  if (!element) throw new Error(`Missing side panel element: ${id}`);
+  return element as T;
+}
+
+function queryElement<T extends Element>(selector: string): T {
+  const element = document.querySelector(selector);
+  if (!element) throw new Error(`Missing side panel element: ${selector}`);
+  return element as T;
+}
+
+async function restoreGuideSettings(): Promise<void> {
+  const stored = await chrome.storage.local.get(Object.values(GUIDE_STORAGE_KEYS)) as StoredSettings;
+  const provider = normalizeProvider(stored[GUIDE_STORAGE_KEYS.provider]);
+  if (stored[GUIDE_STORAGE_KEYS.provider] !== provider) {
+    await chrome.storage.local.set({ [GUIDE_STORAGE_KEYS.provider]: provider });
   }
+  await chrome.storage.local.remove(DEPRECATED_STORAGE_KEYS);
   applyProviderFields(stored);
 }
 
-async function clearStoredApiKey() {
-  const provider = getSelectedProvider();
-  await chrome.storage.local.remove(PROVIDER_DEFAULTS[provider].apiKeyStorageKey);
-  apiKeyInput.value = "";
-  setStatus(`Stored ${PROVIDER_DEFAULTS[provider].label} cleared.`);
+async function resetBackendUrl(): Promise<void> {
+  await chrome.storage.local.set({
+    [PROVIDER_DEFAULTS.backend.baseUrlStorageKey as string]: PROVIDER_DEFAULTS.backend.baseUrl,
+    [GUIDE_STORAGE_KEYS.provider]: "backend"
+  });
+  backendUrlInput.value = PROVIDER_DEFAULTS.backend.baseUrl || "";
+  setStatus("Backend URL reset.");
 }
 
-async function refreshSessionDashboard() {
+async function refreshSessionDashboard(): Promise<void> {
   try {
     const response = await chrome.runtime.sendMessage({ type: "BRIDGE_GET_SESSION_DASHBOARD" });
     if (!response?.ok) {
@@ -120,11 +160,11 @@ async function refreshSessionDashboard() {
     }
     renderSessionDashboard(response.dashboard);
   } catch (error) {
-    setStatus(error.message || "Failed to load guidance session.", true);
+    setStatus(errorMessage(error, "Failed to load guidance session."), true);
   }
 }
 
-async function endCurrentGuide() {
+async function endCurrentGuide(): Promise<void> {
   endGuideButton.disabled = true;
   setStatus("Ending guide...");
 
@@ -135,13 +175,13 @@ async function endCurrentGuide() {
     }
     setStatus("Guide ended.");
   } catch (error) {
-    setStatus(error.message || "Failed to end guide.", true);
+    setStatus(errorMessage(error, "Failed to end guide."), true);
   } finally {
     await refreshSessionDashboard();
   }
 }
 
-async function toggleAutoRefresh() {
+async function toggleAutoRefresh(): Promise<void> {
   const nextPaused = !currentAutoRefreshPaused;
   autoRefreshButton.disabled = true;
   setStatus(nextPaused ? "Pausing automatic refresh..." : "Resuming automatic refresh...");
@@ -153,38 +193,37 @@ async function toggleAutoRefresh() {
     }
     setStatus(nextPaused ? "Automatic refresh paused." : "Automatic refresh resumed.");
   } catch (error) {
-    setStatus(error.message || "Failed to update automatic refresh.", true);
+    setStatus(errorMessage(error, "Failed to update automatic refresh."), true);
   } finally {
     await refreshSessionDashboard();
   }
 }
 
-async function updateProviderFields() {
-  const provider = getSelectedProvider();
-  resetTaskClarification();
-  await chrome.storage.local.set({ [GUIDE_STORAGE_KEYS.provider]: provider });
-  const stored = await chrome.storage.local.get(Object.values(GUIDE_STORAGE_KEYS));
-  applyProviderFields(stored);
-}
-
-function applyProviderFields(stored = {}) {
-  const provider = getSelectedProvider();
-  const config = PROVIDER_DEFAULTS[provider];
-  apiKeyLabel.textContent = config.label;
-  apiKeyInput.placeholder = config.placeholder;
-  apiKeyInput.value = stored[config.apiKeyStorageKey] || "";
+function applyProviderFields(stored: StoredSettings = {}): void {
+  const config = PROVIDER_DEFAULTS.backend;
+  backendUrlField.hidden = false;
+  resetUrlButton.textContent = "Reset URL";
+  backendUrlInput.placeholder = PROVIDER_DEFAULTS.backend.placeholder;
+  backendUrlInput.value =
+    stored[PROVIDER_DEFAULTS.backend.baseUrlStorageKey as string] ||
+    PROVIDER_DEFAULTS.backend.baseUrl ||
+    "";
   modelInput.value = config.model;
 }
 
-function getSelectedProvider() {
-  return "openai";
+function getSelectedProvider(): Provider {
+  return "backend";
 }
 
-async function startGuidedTaskMode() {
+function normalizeProvider(provider: unknown): Provider {
+  return "backend";
+}
+
+async function startGuidedTaskMode(): Promise<void> {
   const provider = getSelectedProvider();
   const providerConfig = PROVIDER_DEFAULTS[provider];
   const taskRequest = taskRequestInput.value.trim();
-  const apiKey = apiKeyInput.value.trim();
+  const backendBaseUrl = backendUrlInput.value.trim() || PROVIDER_DEFAULTS.backend.baseUrl || "";
   const model = providerConfig.model;
 
   if (!taskRequest) {
@@ -193,9 +232,9 @@ async function startGuidedTaskMode() {
     return;
   }
 
-  if (!apiKey) {
-    setStatus(`Enter a ${providerConfig.label} for the prototype.`, true);
-    apiKeyInput.focus();
+  if (!backendBaseUrl) {
+    setStatus("Enter a Backend URL for the proxy.", true);
+    backendUrlInput.focus();
     return;
   }
 
@@ -203,11 +242,11 @@ async function startGuidedTaskMode() {
   setStatus("Creating guidance or a clarification question...");
 
   try {
-    await chrome.storage.local.set({
+    const settings: Record<string, string> = {
       [GUIDE_STORAGE_KEYS.provider]: provider,
-      [providerConfig.apiKeyStorageKey]: apiKey,
-      [providerConfig.modelStorageKey]: model
-    });
+      [PROVIDER_DEFAULTS.backend.baseUrlStorageKey as string]: backendBaseUrl
+    };
+    await chrome.storage.local.set(settings);
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) {
@@ -216,14 +255,14 @@ async function startGuidedTaskMode() {
 
     await startGuideWithTaskRequest({ tabId: tab.id, provider, model, taskRequest, history: [] });
   } catch (error) {
-    setStatus(error.message || "Failed to start Guided Task Mode.", true);
+    setStatus(errorMessage(error, "Failed to start Guided Task Mode."), true);
     await refreshSessionDashboard();
   } finally {
     setBusy(false);
   }
 }
 
-async function answerTaskClarification() {
+async function answerTaskClarification(): Promise<void> {
   const answer = clarificationAnswerInput.value.trim();
   if (!clarificationState?.question) {
     setStatus("No clarification question is active.", true);
@@ -262,24 +301,31 @@ async function answerTaskClarification() {
       throw new Error("No active tab found.");
     }
 
+    const startClarificationState = clarificationState as StartClarificationState;
     await startGuideWithTaskRequest({
       tabId: tab.id,
-      provider: clarificationState.provider,
-      model: clarificationState.model,
-      taskRequest: clarificationState.taskRequest,
+      provider: startClarificationState.provider,
+      model: startClarificationState.model,
+      taskRequest: startClarificationState.taskRequest,
       history
     });
   } catch (error) {
-    setStatus(error.message || "Failed to clarify task.", true);
+    setStatus(errorMessage(error, "Failed to clarify task."), true);
     await refreshSessionDashboard();
   } finally {
     setBusy(false);
   }
 }
 
-async function startGuideWithTaskRequest({ tabId, provider, model, taskRequest, history = [] }) {
+async function startGuideWithTaskRequest({
+  tabId,
+  provider,
+  model,
+  taskRequest,
+  history = []
+}: StartGuideRequest): Promise<void> {
   setBusy(true, "Planning guide...");
-  setStatus(`Creating guidance with ${PROVIDER_DISPLAY_LABELS[provider] || "Gemini"}...`);
+  setStatus(`Creating guidance with ${PROVIDER_DISPLAY_LABELS[provider] || "Model"}...`);
   const response = await chrome.runtime.sendMessage({
     type: "BRIDGE_START_GUIDE",
     tabId,
@@ -319,7 +365,7 @@ async function startGuideWithTaskRequest({ tabId, provider, model, taskRequest, 
   await refreshSessionDashboard();
 }
 
-function resetTaskClarification() {
+function resetTaskClarification(): void {
   clarificationState = null;
   clarificationPanel.hidden = true;
   clarificationQuestion.textContent = "-";
@@ -328,9 +374,9 @@ function resetTaskClarification() {
   startGuideButton.disabled = false;
 }
 
-function setBusy(isBusy, busyText = "Working...") {
+function setBusy(isBusy: boolean, busyText = "Working..."): void {
   startGuideButton.disabled = isBusy || Boolean(clarificationState?.question);
-  clearKeyButton.disabled = isBusy;
+  resetUrlButton.disabled = isBusy;
   answerClarificationButton.disabled = isBusy;
   cancelClarificationButton.disabled = isBusy;
   startGuideButton.textContent = isBusy ? "Working..." : (clarificationState?.question ? "Clarify first" : "Start guide");
@@ -339,19 +385,19 @@ function setBusy(isBusy, busyText = "Working...") {
   loadingText.textContent = busyText;
 }
 
-function setStatus(message, isError = false) {
+function setStatus(message: string, isError = false): void {
   statusEl.textContent = message;
   statusEl.classList.toggle("error", isError);
 }
 
-function renderSessionDashboard(dashboard = {}) {
+function renderSessionDashboard(dashboard: Record<string, any> = {}): void {
   const status = Object.prototype.hasOwnProperty.call(SESSION_STATUS_LABELS, dashboard.status) ? dashboard.status : "noGuide";
   const activity = dashboard.activity || {};
   const currentStep = dashboard.currentStep;
 
-  sessionStatusBadge.textContent = SESSION_STATUS_LABELS[status];
+  sessionStatusBadge.textContent = SESSION_STATUS_LABELS[status] || SESSION_STATUS_LABELS.noGuide || "No guide";
   sessionStatusBadge.className = `statusBadge ${status}`;
-  sessionStatusText.textContent = SESSION_STATUS_TEXT[status];
+  sessionStatusText.textContent = SESSION_STATUS_TEXT[status] || SESSION_STATUS_TEXT.noGuide || "No guide is running.";
 
   guideActivity.hidden = !activity.isWorking;
   guideActivityText.textContent = activity.message || "Preparing guide...";
@@ -386,7 +432,7 @@ function renderSessionDashboard(dashboard = {}) {
   }
 }
 
-function renderGeneratedGuide(steps) {
+function renderGeneratedGuide(steps: Array<Record<string, any>>): void {
   generatedGuideList.replaceChildren();
   generatedGuideCount.textContent = `${steps.length} ${steps.length === 1 ? "step" : "steps"}`;
 
@@ -441,21 +487,25 @@ function renderGeneratedGuide(steps) {
   }
 }
 
-function normalizeGuideStepState(state) {
+function normalizeGuideStepState(state: unknown): GuideStepState {
   if (state === "completed" || state === "current") return state;
   return "notCompleted";
 }
 
-function guideStepStateLabel(state) {
+function guideStepStateLabel(state: GuideStepState): string {
   if (state === "completed") return "Completed";
   if (state === "current") return "Current";
   return "Not completed";
 }
 
-function formatGuideTarget(target = {}) {
+function formatGuideTarget(target: Record<string, any> = {}): string {
   target = target || {};
   const label = target.label || target.text || target.placeholder || target.name || "";
   const role = target.role || "";
   if (role && label) return `${role}: ${label}`;
   return label || role;
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
 }
