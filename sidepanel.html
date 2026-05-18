@@ -67,16 +67,23 @@
         <label class="field">
           <span>Provider</span>
           <select id="providerSelect">
-            <option value="openai">Gemini</option>
+            <option value="backend">Backend Proxy</option>
+            <option value="gemini">Gemini Demo</option>
+            <option value="openai">OpenAI Demo</option>
           </select>
         </label>
 
-        <label class="field">
+        <label id="backendUrlField" class="field">
+          <span>Backend URL</span>
+          <input id="backendUrlInput" type="url" autocomplete="off" placeholder="http://localhost:8787">
+        </label>
+
+        <label id="apiKeyField" class="field">
           <span id="apiKeyLabel">Gemini API key</span>
           <input id="apiKeyInput" type="password" autocomplete="off" placeholder="AIza...">
         </label>
 
-        <input id="modelInput" type="hidden" value="gpt-4.1-mini">
+        <input id="modelInput" type="hidden" value="backend-proxy">
 
         <label class="field">
           <span>Task request</span>

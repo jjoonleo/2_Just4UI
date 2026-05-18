@@ -3,6 +3,9 @@ const loadingIndicator = document.getElementById("loadingIndicator");
 const loadingText = document.getElementById("loadingText");
 const statusEl = document.getElementById("status");
 const providerSelect = document.getElementById("providerSelect");
+const backendUrlField = document.getElementById("backendUrlField");
+const backendUrlInput = document.getElementById("backendUrlInput");
+const apiKeyField = document.getElementById("apiKeyField");
 const apiKeyLabel = document.getElementById("apiKeyLabel");
 const apiKeyInput = document.getElementById("apiKeyInput");
 const modelInput = document.getElementById("modelInput");
@@ -30,6 +33,7 @@ let currentAutoRefreshPaused = false;
 
 const GUIDE_STORAGE_KEYS = {
   provider: "bridgeModelProvider",
+  backendBaseUrl: "bridgeBackendBaseUrl",
   geminiApiKey: "bridgeGeminiApiKey",
   geminiModel: "bridgeGeminiModel",
   openAiApiKey: "bridgeOpenAiApiKey",
@@ -37,6 +41,13 @@ const GUIDE_STORAGE_KEYS = {
 };
 
 const PROVIDER_DEFAULTS = {
+  backend: {
+    label: "Backend URL",
+    placeholder: "http://localhost:8787",
+    model: "backend-proxy",
+    baseUrl: "http://localhost:8787",
+    baseUrlStorageKey: GUIDE_STORAGE_KEYS.backendBaseUrl
+  },
   gemini: {
     label: "Gemini API key",
     placeholder: "AIza...",
@@ -45,17 +56,18 @@ const PROVIDER_DEFAULTS = {
     modelStorageKey: GUIDE_STORAGE_KEYS.geminiModel
   },
   openai: {
-    label: "Gemini API key",
+    label: "OpenAI API key",
     placeholder: "sk-...",
-    model: "gpt-4.1-mini",
+    model: "gpt-5.4-mini",
     apiKeyStorageKey: GUIDE_STORAGE_KEYS.openAiApiKey,
     modelStorageKey: GUIDE_STORAGE_KEYS.openAiModel
   }
 };
 
 const PROVIDER_DISPLAY_LABELS = {
-  gemini: "Gemini",
-  openai: "Gemini"
+  backend: "Backend Proxy",
+  gemini: "Gemini Demo",
+  openai: "OpenAI Demo"
 };
 
 let clarificationState = null;
@@ -98,18 +110,26 @@ refreshSessionDashboard();
 
 async function restoreGuideSettings() {
   const stored = await chrome.storage.local.get(Object.values(GUIDE_STORAGE_KEYS));
-  providerSelect.value = "openai";
-  if (stored[GUIDE_STORAGE_KEYS.provider] !== "openai") {
-    await chrome.storage.local.set({ [GUIDE_STORAGE_KEYS.provider]: "openai" });
+  const provider = normalizeProvider(stored[GUIDE_STORAGE_KEYS.provider]);
+  providerSelect.value = provider;
+  if (stored[GUIDE_STORAGE_KEYS.provider] !== provider) {
+    await chrome.storage.local.set({ [GUIDE_STORAGE_KEYS.provider]: provider });
   }
   applyProviderFields(stored);
 }
 
 async function clearStoredApiKey() {
   const provider = getSelectedProvider();
-  await chrome.storage.local.remove(PROVIDER_DEFAULTS[provider].apiKeyStorageKey);
+  const config = PROVIDER_DEFAULTS[provider];
+  if (provider === "backend") {
+    await chrome.storage.local.set({ [config.baseUrlStorageKey]: config.baseUrl });
+    backendUrlInput.value = config.baseUrl;
+    setStatus("Backend URL reset.");
+    return;
+  }
+  await chrome.storage.local.remove(config.apiKeyStorageKey);
   apiKeyInput.value = "";
-  setStatus(`Stored ${PROVIDER_DEFAULTS[provider].label} cleared.`);
+  setStatus(`Stored ${config.label} cleared.`);
 }
 
 async function refreshSessionDashboard() {
@@ -170,14 +190,32 @@ async function updateProviderFields() {
 function applyProviderFields(stored = {}) {
   const provider = getSelectedProvider();
   const config = PROVIDER_DEFAULTS[provider];
-  apiKeyLabel.textContent = config.label;
-  apiKeyInput.placeholder = config.placeholder;
-  apiKeyInput.value = stored[config.apiKeyStorageKey] || "";
+  const isBackend = provider === "backend";
+  backendUrlField.hidden = !isBackend;
+  apiKeyField.hidden = isBackend;
+  clearKeyButton.textContent = isBackend ? "Reset URL" : "Clear key";
+  backendUrlInput.placeholder = PROVIDER_DEFAULTS.backend.placeholder;
+  backendUrlInput.value =
+    stored[PROVIDER_DEFAULTS.backend.baseUrlStorageKey] ||
+    PROVIDER_DEFAULTS.backend.baseUrl;
+  if (!isBackend) {
+    apiKeyLabel.textContent = config.label;
+    apiKeyInput.placeholder = config.placeholder;
+    apiKeyInput.value = stored[config.apiKeyStorageKey] || "";
+  } else {
+    apiKeyInput.value = "";
+  }
   modelInput.value = config.model;
 }
 
 function getSelectedProvider() {
-  return "openai";
+  return normalizeProvider(providerSelect.value);
+}
+
+function normalizeProvider(provider) {
+  return Object.prototype.hasOwnProperty.call(PROVIDER_DEFAULTS, provider)
+    ? provider
+    : "backend";
 }
 
 async function startGuidedTaskMode() {
@@ -185,6 +223,7 @@ async function startGuidedTaskMode() {
   const providerConfig = PROVIDER_DEFAULTS[provider];
   const taskRequest = taskRequestInput.value.trim();
   const apiKey = apiKeyInput.value.trim();
+  const backendBaseUrl = backendUrlInput.value.trim() || providerConfig.baseUrl;
   const model = providerConfig.model;
 
   if (!taskRequest) {
@@ -193,7 +232,13 @@ async function startGuidedTaskMode() {
     return;
   }
 
-  if (!apiKey) {
+  if (provider === "backend" && !backendBaseUrl) {
+    setStatus("Enter a Backend URL for the proxy.", true);
+    backendUrlInput.focus();
+    return;
+  }
+
+  if (provider !== "backend" && !apiKey) {
     setStatus(`Enter a ${providerConfig.label} for the prototype.`, true);
     apiKeyInput.focus();
     return;
@@ -203,11 +248,18 @@ async function startGuidedTaskMode() {
   setStatus("Creating guidance or a clarification question...");
 
   try {
-    await chrome.storage.local.set({
-      [GUIDE_STORAGE_KEYS.provider]: provider,
-      [providerConfig.apiKeyStorageKey]: apiKey,
-      [providerConfig.modelStorageKey]: model
-    });
+    const settings = {
+      [GUIDE_STORAGE_KEYS.provider]: provider
+    };
+    if (providerConfig.modelStorageKey) {
+      settings[providerConfig.modelStorageKey] = model;
+    }
+    if (provider === "backend") {
+      settings[providerConfig.baseUrlStorageKey] = backendBaseUrl;
+    } else {
+      settings[providerConfig.apiKeyStorageKey] = apiKey;
+    }
+    await chrome.storage.local.set(settings);
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) {
@@ -279,7 +331,7 @@ async function answerTaskClarification() {
 
 async function startGuideWithTaskRequest({ tabId, provider, model, taskRequest, history = [] }) {
   setBusy(true, "Planning guide...");
-  setStatus(`Creating guidance with ${PROVIDER_DISPLAY_LABELS[provider] || "Gemini"}...`);
+  setStatus(`Creating guidance with ${PROVIDER_DISPLAY_LABELS[provider] || "Model"}...`);
   const response = await chrome.runtime.sendMessage({
     type: "BRIDGE_START_GUIDE",
     tabId,

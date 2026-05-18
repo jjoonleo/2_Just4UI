@@ -11,6 +11,12 @@ const GUIDANCE_PLAN_MODES = {
   CONTINUE_AFTER_WINDOW_ENDED: "continueAfterWindowEnded",
 };
 const PROVIDER_CONFIG = {
+  backend: {
+    backendBaseUrlStorageKey: "bridgeBackendBaseUrl",
+    defaultBaseUrl: "http://localhost:8787",
+    defaultModel: "backend-proxy",
+    label: "Backend Proxy",
+  },
   gemini: {
     apiKeyStorageKey: "bridgeGeminiApiKey",
     defaultModel: "gemini-2.5-flash",
@@ -19,7 +25,7 @@ const PROVIDER_CONFIG = {
   openai: {
     apiKeyStorageKey: "bridgeOpenAiApiKey",
     defaultModel: "gpt-5.4-mini",
-    label: "Gemini",
+    label: "OpenAI",
   },
 };
 const pageStateRefreshes = new Map();
@@ -107,7 +113,7 @@ chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
 
 async function startGuide({
   tabId,
-  provider = "gemini",
+  provider = "backend",
   taskRequest,
   model,
   clarificationHistory = [],
@@ -122,11 +128,7 @@ async function startGuide({
       taskRequest,
     });
 
-    const stored = await chrome.storage.local.get(
-      providerConfig.apiKeyStorageKey,
-    );
-    const apiKey = stored[providerConfig.apiKeyStorageKey];
-    if (!apiKey) throw new Error(`${providerConfig.label} API key is missing.`);
+    const providerCredential = await getProviderCredential(providerConfig);
 
     const tab = await chrome.tabs.get(tabId);
     if (tab.windowId == null)
@@ -145,7 +147,8 @@ async function startGuide({
     const planDecision = await createGuidancePlan({
       mode: GUIDANCE_PLAN_MODES.INITIAL,
       provider: modelProvider,
-      apiKey,
+      apiKey: providerCredential.apiKey,
+      backendBaseUrl: providerCredential.backendBaseUrl,
       model: selectedModel,
       taskRequest,
       planningPayload,
@@ -307,11 +310,7 @@ async function refreshHostTab(tabId, message = "", options = {}) {
   try {
     const modelProvider = normalizeProvider(initialSession.provider);
     const providerConfig = PROVIDER_CONFIG[modelProvider];
-    const stored = await chrome.storage.local.get(
-      providerConfig.apiKeyStorageKey,
-    );
-    const apiKey = stored[providerConfig.apiKeyStorageKey];
-    if (!apiKey) throw new Error(`${providerConfig.label} API key is missing.`);
+    const providerCredential = await getProviderCredential(providerConfig);
 
     await removeOverlayFromTab(tabId);
 
@@ -339,7 +338,8 @@ async function refreshHostTab(tabId, message = "", options = {}) {
     const refreshedPlanDecision = await createGuidancePlan({
       mode: options.mode || GUIDANCE_PLAN_MODES.REFRESH,
       provider: modelProvider,
-      apiKey,
+      apiKey: providerCredential.apiKey,
+      backendBaseUrl: providerCredential.backendBaseUrl,
       model: providerConfig.defaultModel,
       taskRequest: session.taskRequest,
       planningPayload,
@@ -1147,7 +1147,28 @@ function compactContinuationTarget(target = {}) {
 }
 
 function normalizeProvider(provider) {
-  return provider === "openai" ? "openai" : "gemini";
+  if (provider === "openai") return "openai";
+  if (provider === "gemini") return "gemini";
+  return "backend";
+}
+
+async function getProviderCredential(providerConfig) {
+  if (providerConfig.backendBaseUrlStorageKey) {
+    const stored = await chrome.storage.local.get(
+      providerConfig.backendBaseUrlStorageKey,
+    );
+    const backendBaseUrl =
+      stringOrNull(stored[providerConfig.backendBaseUrlStorageKey]) ||
+      providerConfig.defaultBaseUrl;
+    if (!backendBaseUrl)
+      throw new Error(`${providerConfig.label} URL is missing.`);
+    return { backendBaseUrl };
+  }
+
+  const stored = await chrome.storage.local.get(providerConfig.apiKeyStorageKey);
+  const apiKey = stored[providerConfig.apiKeyStorageKey];
+  if (!apiKey) throw new Error(`${providerConfig.label} API key is missing.`);
+  return { apiKey };
 }
 
 function createPlanningPayload(snapshot) {
@@ -1234,6 +1255,7 @@ async function createGuidancePlan({
   mode = GUIDANCE_PLAN_MODES.INITIAL,
   provider,
   apiKey,
+  backendBaseUrl,
   model,
   taskRequest,
   planningPayload,
@@ -1241,6 +1263,16 @@ async function createGuidancePlan({
   clarificationHistory = [],
 }) {
   const normalizedMode = normalizeGuidancePlanMode(mode);
+  if (provider === "backend") {
+    return createBackendGuidancePlan({
+      mode: normalizedMode,
+      backendBaseUrl,
+      taskRequest,
+      planningPayload,
+      previousSession,
+      clarificationHistory,
+    });
+  }
   if (provider === "openai") {
     return createOpenAiGuidancePlan({
       mode: normalizedMode,
@@ -1422,6 +1454,39 @@ async function createGeminiGuidancePlan({
   return validateGuidancePlan(plan, taskRequest, mode);
 }
 
+async function createBackendGuidancePlan({
+  mode,
+  backendBaseUrl,
+  taskRequest,
+  planningPayload,
+  previousSession,
+  clarificationHistory,
+}) {
+  const endpoint = `${normalizeBackendBaseUrl(backendBaseUrl)}/guidance-plan`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      contractVersion: 1,
+      mode,
+      taskRequest,
+      planningPayload,
+      previousSession,
+      clarificationHistory: compactClarificationHistory(clarificationHistory),
+    }),
+  });
+
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      data?.error || `Backend Proxy request failed with HTTP ${response.status}.`,
+    );
+  }
+  return validateGuidancePlan(data, taskRequest, mode);
+}
+
 async function createOpenAiGuidancePlan({
   mode,
   apiKey,
@@ -1466,14 +1531,20 @@ async function createOpenAiGuidancePlan({
   if (!response.ok)
     throw new Error(
       data?.error?.message ||
-        `Gemini request failed with HTTP ${response.status}.`,
+        `OpenAI request failed with HTTP ${response.status}.`,
     );
 
   const rawText = extractOpenAiResponseText(data);
   if (!rawText) throw new Error("Model returned no guidance plan text.");
 
-  const plan = parseModelJson(rawText, "Gemini");
+  const plan = parseModelJson(rawText, "OpenAI");
   return validateGuidancePlan(plan, taskRequest, mode);
+}
+
+function normalizeBackendBaseUrl(baseUrl) {
+  const trimmed = String(baseUrl || "").trim().replace(/\/+$/, "");
+  if (!trimmed) throw new Error("Backend Proxy URL is missing.");
+  return trimmed;
 }
 
 function throwIfGeminiResponseWasTruncated(data, rawText) {
